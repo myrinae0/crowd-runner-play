@@ -37,13 +37,15 @@ export function resolveContact(crowd, enemy) {
 }
 
 // One tick of the boss melee.
-// f = { crowd, bossHp, lossAcc }  p = { soldierDps, bossDps }
+// f = { crowd, bossHp, lossAcc }  p = { soldierDps, bossDps, maxFighters? }
 // The crowd deals crowd * soldierDps damage per second; the boss removes
 // bossDps soldiers per second (fractions accumulate in lossAcc).
 export function bossTick(f, dt, p) {
   const out = { ...f };
   if (out.crowd <= 0 || out.bossHp <= 0) return out;
-  out.bossHp = Math.max(0, out.bossHp - out.crowd * p.soldierDps * dt);
+  // Only so many soldiers can reach the boss at once (p.maxFighters, v2 bosses).
+  const fighters = Math.min(out.crowd, p.maxFighters ?? Infinity);
+  out.bossHp = Math.max(0, out.bossHp - fighters * p.soldierDps * dt);
   out.lossAcc += p.bossDps * dt;
   const lost = Math.floor(out.lossAcc + 1e-9); // epsilon: 60 x (6/60) must be exactly 6
   out.lossAcc = Math.max(0, out.lossAcc - lost);

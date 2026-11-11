@@ -35,3 +35,48 @@ export const MUL_LADDER = [
 export const MUL_SHOT_CAP = 3; // index of ×2 in MUL_LADDER
 export const MAX_STREAMS = 3;  // parallel bullet streams at most (1 + 1 per 40 soldiers)
 export const STREAM_EVERY = 40;
+
+// ---- v2 mechanics -------------------------------------------------------
+// Level on which each mechanic first appears. On that level it is the only new
+// thing, its first appearance shows a short hint, and it is guaranteed to show
+// up. Later levels mix it in with the others.
+export const FEATURES = {
+  moving: 2,      // gates that slide or swap values
+  gamble: 3,      // "?" gates
+  bridge: 4,      // narrow bridges (and the squeeze move)
+  saws: 5,        // sweeping saw blades
+  bossAttacks: 6, // boss throws boulders and stomps
+  archers: 7,     // archer towers that shoot back
+  weapons: 8,     // rocket / laser / magnet pickups
+  crushers: 9,    // crushers that slam down
+  fork: 10,       // fork in the road
+  giants: 11,     // giant enemies
+  shields: 12,    // shielded squads
+  splitters: 13,  // squads that split when hit
+};
+export const SQUEEZE_LEVEL = FEATURES.bridge; // the squeeze pad shows from here on
+
+export const SQUEEZE_SHRINK = 0.5;   // packed crowd radius = normal * (1 - this)
+export const SQUEEZE_RATE = 7;       // how fast the crowd packs / spreads (1/s)
+export const SQUEEZE_FIRE = 0.6;     // fire-rate multiplier while packed (and 1 stream)
+
+export const HINT_AHEAD = 150;       // hints show when the thing is this far ahead
+
+export const SAW_R = 5.5;            // saw blade radius (world units)
+export const SAW_RATE = 0.9;         // share of the touching soldiers lost per second
+export const CRUSH_RATE = 3.2;       // same for a crusher that is down
+export const FALL_RATE = 2.6;        // same for soldiers hanging off a bridge
+export const MIN_LOSS_RATE = 4;      // touching a hazard always costs at least this many soldiers/s
+
+export const ARROW_FLIGHT = 1.15;    // seconds an arrow is in the air
+export const ARROW_R = 3;            // arrow hit radius at the landing point
+export const TOWER_RANGE = 130;      // towers shoot when the crowd is this close
+export const TOWER_W = 9;            // tower footprint width
+
+export const GAMBLE_REVEAL = 30;     // "?" gates reveal when the crowd is this close
+
+export const COIN_R = 1.6;           // pickup radius of a track coin
+export const MAGNET_R = 55;          // magnet pulls coins this close
+export const ROCKET_EVERY = 0.4;     // seconds between rockets
+export const ROCKET_SPLASH = 10;     // rocket blast radius
+export const ROCKET_DMG = 4;         // rocket damage = bullet damage * this

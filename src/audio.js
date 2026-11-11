@@ -6,6 +6,7 @@ export function createAudio() {
   let muted = true;
   let lastShot = 0;
   let lastKill = 0;
+  let lastCoin = 0;
 
   function ensure() {
     if (ctx || muted) return ctx;
@@ -66,6 +67,15 @@ export function createAudio() {
             if (e.cause !== 'boss') blip(140, 0.15, 'sawtooth', 0.05, -60);
             break;
           case 'powerup': blip(660, 0.25, 'triangle', 0.08, 700); break;
+          case 'gambleReveal': blip(e.mood === 'good' ? 880 : 200, 0.2, 'triangle', 0.07, e.mood === 'good' ? 400 : -100); break;
+          case 'bossSlam': blip(70, 0.35, 'sawtooth', 0.09, -30); break;
+          case 'boulderLand': blip(90, 0.22, 'square', 0.07, -40); break;
+          case 'bossPhase2': blip(150, 0.5, 'sawtooth', 0.08, 120); break;
+          case 'coin': if (now - lastCoin > 50) { blip(1320, 0.06, 'triangle', 0.035); lastCoin = now; } break;
+          case 'boom': blip(120, 0.18, 'sawtooth', 0.06, -60); break;
+          case 'arrowFire': blip(1200, 0.12, 'sine', 0.03, -700); break;
+          case 'hint': blip(700, 0.12, 'triangle', 0.05, 200); break;
+          case 'squeeze': if (e.on) blip(330, 0.06, 'triangle', 0.04, 120); break;
           case 'bossStart': blip(110, 0.5, 'sawtooth', 0.07, -40); break;
           case 'won': blip(523, 0.15, 'triangle', 0.08); setTimeout(() => blip(784, 0.3, 'triangle', 0.08), 140); break;
           case 'lost': blip(220, 0.5, 'sawtooth', 0.06, -150); break;

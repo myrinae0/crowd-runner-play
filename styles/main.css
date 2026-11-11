@@ -96,6 +96,7 @@ h2.lose { color: #ff7b72; }
 .how { color: var(--muted); font-size: 14px; line-height: 1.45; margin: 0 0 14px; }
 .how .good { color: #6fd0ff; }
 .how .bad { color: #ff7b72; }
+.how .gold { color: var(--gold); }
 .keys { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
 
 button {

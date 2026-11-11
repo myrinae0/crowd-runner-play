@@ -8,8 +8,13 @@
 //   ?boss=1        fast-forward to the boss fight (plus ?t seconds into it)
 //   ?freeze=1      stop the sim after fast-forwarding (static frame)
 //   ?nosave=1      don't read or write localStorage
+//   ?feature=NAME  play the level that introduces a mechanic (saws, bridge, ...;
+//                  see FEATURES in config.js) and fast-forward to its first
+//                  appearance (unless ?t is given); ?after=S tunes how far past
+//                  the hint to stop (default 2.5 s)
+//   ?bench=N       after fast-forwarding, time N frames; result in the page title
 
-import { DT } from './config.js';
+import { DT, FEATURES, SQUEEZE_LEVEL } from './config.js';
 import { generateLevel, DEFAULT_SEED } from './level.js';
 import { createRun, step } from './sim.js';
 import { botInput } from './bot.js';
@@ -28,6 +33,8 @@ const SEED = params.get('seed') || DEFAULT_SEED;
 const FF_T = parseFloat(params.get('t') || '0') || 0;
 const FF_BOSS = params.get('boss') === '1';
 const FREEZE = params.get('freeze') === '1';
+const FEATURE = FEATURES[params.get('feature')] ? params.get('feature') : null;
+const FF_AFTER = parseFloat(params.get('after') || '2.5');
 
 const storage = (() => {
   if (NOSAVE) return null;
@@ -36,6 +43,7 @@ const storage = (() => {
 
 let save = storage ? loadSave(storage) : defaultSave();
 if (params.get('level')) save.level = Math.max(1, parseInt(params.get('level'), 10) || 1);
+if (FEATURE) save.level = FEATURES[FEATURE];
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -43,7 +51,7 @@ const renderer = createRenderer(canvas);
 const fx = createFx();
 const audio = createAudio();
 audio.setMuted(save.muted);
-const input = createInput(canvas, () => renderer.size.ppu);
+const input = createInput(canvas, () => renderer.size.ppu, (x, y) => mode === 'play' && renderer.hitPad(x, y));
 
 let mode = 'menu'; // menu | play | paused | end
 let state = null;
@@ -57,9 +65,14 @@ function persist() {
   if (storage) writeSave(storage, save);
 }
 
+// Demo mode plays with upgrades a typical player would have by that level.
+function demoUpgrades(lv) {
+  return { crowd: Math.min(30, lv - 1), rate: Math.min(20, lv - 1), dmg: Math.min(10, Math.floor(lv / 3)) };
+}
+
 function startLevel() {
   const def = generateLevel(SEED, save.level);
-  state = createRun(def, save.upgrades);
+  state = createRun(def, DEMO ? demoUpgrades(save.level) : save.upgrades);
   fx.clear();
   input.reset();
   banked = false;
@@ -195,7 +208,13 @@ function inputFor(s) {
 }
 
 function drawNow() {
-  if (state) renderer.draw(state, fx, { hidden: mode === 'menu', bankedCoins: banked ? save.coins - state.coins : save.coins });
+  if (state) {
+    renderer.draw(state, fx, {
+      hidden: mode === 'menu',
+      bankedCoins: banked ? save.coins - state.coins : save.coins,
+      pad: state.level >= SQUEEZE_LEVEL && (state.phase === 'run' || state.phase === 'boss'),
+    });
+  }
 }
 
 function frame(now) {
@@ -278,8 +297,22 @@ window.crowdRunner = {
 
 function boot() {
   refreshScreens();
-  if (DEMO || FF_T > 0 || FF_BOSS) {
+  if (DEMO || FF_T > 0 || FF_BOSS || FEATURE) {
     startLevel();
+    if (FEATURE && !(FF_T > 0) && !FF_BOSS) {
+      // Run until the mechanic's hint shows, then a little longer.
+      let guard = 0;
+      const seen = () => state.hints.some((h) => h.shown) || (state.phase !== 'run' && state.phase !== 'boss');
+      while (!seen() && guard++ < 60 * 300) { step(state, inputFor(state)); state.events.length = 0; }
+      const n = Math.round(FF_AFTER / DT);
+      for (let i = 0; i < n && (state.phase === 'run' || state.phase === 'boss'); i++) {
+        step(state, inputFor(state));
+        if (n - i > 60) state.events.length = 0;
+      }
+      // Keep the hint panel on screen for the screenshot.
+      const h = state.hints.find((x) => x.shown);
+      if (h) state.events.push({ type: 'hint', title: h.title, sub: h.sub });
+    }
     if (FF_BOSS) {
       let guard = 0;
       while (state.phase === 'run' && guard++ < 60 * 300) step(state, inputFor(state));
@@ -289,6 +322,11 @@ function boot() {
       step(state, inputFor(state));
       // Keep only the last second of events so the frame shows fresh effects.
       if (state.events.length > 200 || n - i > 60) state.events.length = 0;
+    }
+    if (params.get('bench')) {
+      // ?bench=N: time N frames (sim / effects / draw) and show it in the title.
+      const r = window.crowdRunner.bench(parseInt(params.get('bench'), 10) || 120);
+      document.title = `bench sim ${r.sim} fx ${r.fx} draw ${r.draw} ms`;
     }
     if (FREEZE) frozen = true;
     if (FREEZE && (state.phase === 'won' || state.phase === 'lost')) { bank(); showEnd(); }

@@ -1,10 +1,12 @@
 // Canvas renderer. Reads sim state, never changes it.
 // Mild perspective: things further down the track get smaller and closer together.
 
-import { RENDER_CAP } from './config.js';
+import { RENDER_CAP, SQUEEZE_SHRINK } from './config.js';
 import { gateLabel, gateMood, gateProgress } from './gates.js';
 import { crowdRadius, squadRadius } from './combat.js';
 import { progress } from './sim.js';
+import { createFeatureDrawer } from './render-features.js';
+import { sinceSwap } from './hazards.js';
 
 const VIEW = 175;     // how far ahead (world units) we draw
 const K = 300;        // perspective strength (bigger = flatter)
@@ -35,8 +37,10 @@ const SQUAD_PACK = packOffsets(80, 1.2);
 const TEAMS = {
   blue: { body: COLORS.crowd, dark: COLORS.crowdDark },
   red: { body: COLORS.enemy, dark: COLORS.enemyDark },
+  purple: { body: '#a24bf0', dark: '#5e1f99' }, // splitters
 };
 const TAU = Math.PI * 2;
+const POWER_COLORS = { rapid: '#ff9a1f', spread: '#a35cff', rocket: '#ef4b3a', laser: '#16b8dc', magnet: '#e0409a' };
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -73,6 +77,23 @@ export function createRenderer(canvas) {
     nearD = K / sB - K - 4;
     return true;
   }
+
+  // Helpers shared with the v2 feature drawer.
+  const V = {
+    ctx, VIEW, TEAMS,
+    proj: (x, d) => proj(x, d),
+    quad: (a, b, c, d) => quad(a, b, c, d),
+    pill: (...a) => pill(...a),
+    outlinedText: (...a) => outlinedText(...a),
+    roundRect: (...a) => roundRect(...a),
+    fadeFor: (d) => fadeFor(d),
+    drawPack: (...a) => drawPack(...a),
+    get ppu() { return ppu; },
+    get nearD() { return nearD; },
+    get W() { return W; },
+    get H() { return H; },
+  };
+  const feat = createFeatureDrawer(V);
 
   function proj(x, d) {
     const s = K / (K + d);
@@ -124,6 +145,8 @@ export function createRenderer(canvas) {
       if (d1 <= d0) continue;
       quad(proj(49.4, d0), proj(50.6, d0), proj(50.6, d1), proj(49.4, d1));
     }
+    feat.drawBridges(state);
+    feat.drawForks(state);
     // sky haze at the far end
     const sky = ctx.createLinearGradient(0, 0, 0, topY + 40);
     sky.addColorStop(0, '#7fc7ff');
@@ -172,12 +195,12 @@ export function createRenderer(canvas) {
 
   // Soldiers are drawn in a few batched paths (shadows, bodies, heads) instead of
   // one draw call each, so 150 soldiers cost about as much as 5.
-  function drawPack(team, pack, n, x, d, t, sizeU, bob) {
+  function drawPack(team, pack, n, x, d, t, sizeU, bob, spread = 1) {
     let m = 0;
     for (const p of pack) {
       if (p.i >= n) continue;
       const wob = bob ? Math.sin(t * 14 + p.i * 1.7) * 0.25 : 0;
-      const q = proj(x + p.ox, d + p.oy + wob);
+      const q = proj(x + p.ox * spread, d + p.oy * spread + wob);
       PX[m] = q.x; PY[m] = q.y; PS[m] = sizeU * ppu * q.s;
       m += 1;
     }
@@ -200,10 +223,26 @@ export function createRenderer(canvas) {
     const d = row.y - state.dist;
     if (d < nearD || d > VIEW) return;
     const alpha = fadeFor(d);
+    const m = row.move;
+    if (m && m.kind === 'slide') {
+      // Guide rail the gates slide along, with end stops.
+      const g0 = row.gates[0], g1 = row.gates[row.gates.length - 1];
+      const a = proj(g0.bx0 - m.amp, d), b = proj(g1.bx1 + m.amp, d);
+      const th = Math.max(2, 1.1 * ppu * a.s);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = 'rgba(40,60,90,0.55)';
+      ctx.fillRect(a.x, a.y - th / 2, b.x - a.x, th);
+      ctx.fillStyle = '#5b6573';
+      ctx.fillRect(a.x - th, a.y - th * 2, th * 2, th * 4);
+      ctx.fillRect(b.x - th, b.y - th * 2, th * 2, th * 4);
+      ctx.globalAlpha = 1;
+    }
+    const flipT = m && m.kind === 'swap' ? sinceSwap(m, state.t) : 99;
+    const flip = flipT < 0.3 ? Math.max(0.06, Math.abs(Math.cos((Math.PI * flipT) / 0.3))) : 1;
     for (const g of row.gates) {
       const mood = gateMood(g);
-      const col = mood === 'good' ? COLORS.good : mood === 'bad' ? COLORS.bad : COLORS.neutral;
-      const edge = mood === 'good' ? COLORS.goodEdge : mood === 'bad' ? COLORS.badEdge : '#d5dae0';
+      const col = mood === 'good' ? COLORS.good : mood === 'bad' ? COLORS.bad : mood === 'gamble' ? '#f5b60a' : COLORS.neutral;
+      const edge = mood === 'good' ? COLORS.goodEdge : mood === 'bad' ? COLORS.badEdge : mood === 'gamble' ? '#fff0a8' : '#d5dae0';
       const l = proj(g.x0 + 0.6, d), r = proj(g.x1 - 0.6, d);
       const h = 15 * ppu * l.s;
       const flash = Math.max(0, 1 - (state.t - g.lastHit) / 0.12);
@@ -225,8 +264,16 @@ export function createRenderer(canvas) {
       ctx.fillRect(r.x - pw / 2, r.y - h * 1.05, pw, h * 1.05);
       // label
       const mx = (l.x + r.x) / 2;
-      const px = 8.5 * ppu * l.s * (1 + flash * 0.15);
-      outlinedText(gateLabel(g), mx, l.y - h * 0.55, px, '#fff');
+      const px = 8.5 * ppu * l.s * (1 + flash * 0.15) * (mood === 'gamble' ? 1.15 + 0.08 * Math.sin(state.t * 6) : 1);
+      if (flip < 1) {
+        ctx.save();
+        ctx.translate(mx, l.y - h * 0.55);
+        ctx.scale(flip, 1);
+        outlinedText(gateLabel(g), 0, 0, px, '#fff');
+        ctx.restore();
+      } else {
+        outlinedText(gateLabel(g), mx, l.y - h * 0.55, px, '#fff');
+      }
       if (g.kind === 'mul') {
         const pr = gateProgress(g);
         const bw = (r.x - l.x) * 0.5, bh = Math.max(3, 1.3 * ppu * l.s);
@@ -238,16 +285,47 @@ export function createRenderer(canvas) {
       }
       ctx.globalAlpha = 1;
     }
+    if (m && m.kind === 'swap') {
+      // Swap badge over the middle post: arrows plus a timer to the next swap.
+      const g0 = row.gates[0], g1 = row.gates[row.gates.length - 1];
+      const q = proj((g0.x0 + g1.x1) / 2, d);
+      const h = 15 * ppu * q.s;
+      const R = Math.max(11, 3.6 * ppu * q.s);
+      const cy = q.y - h - R * 0.9;
+      const u = (state.t % m.period) / m.period;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = 'rgba(15,25,40,0.85)';
+      ctx.beginPath(); ctx.arc(q.x, cy, R, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(255,210,63,0.9)';
+      ctx.beginPath(); ctx.moveTo(q.x, cy); ctx.arc(q.x, cy, R * 0.92, -Math.PI / 2, -Math.PI / 2 + TAU * u); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = 'rgba(15,25,40,0.9)';
+      ctx.beginPath(); ctx.arc(q.x, cy, R * 0.66, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(1.5, R * 0.14);
+      ctx.lineCap = 'round';
+      const w = R * 0.42, k = R * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(q.x - w, cy - k); ctx.lineTo(q.x + w, cy - k); ctx.lineTo(q.x + w - k, cy - k * 2);
+      ctx.moveTo(q.x + w, cy + k); ctx.lineTo(q.x - w, cy + k); ctx.lineTo(q.x - w + k, cy + k * 2);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      ctx.globalAlpha = 1;
+    }
   }
 
   function drawEnemy(state, e) {
     const d = e.y - state.dist;
     if (d < nearD || d > VIEW) return;
+    if (e.kind === 'tower') { feat.drawTower(state, e); return; }
     ctx.globalAlpha = fadeFor(d);
-    if (e.kind === 'squad') {
-      drawPack('red', SQUAD_PACK, Math.min(e.count, 80), e.x, d, state.t, 3.5, true);
+    if (e.kind === 'giant') {
+      feat.drawGiant(state, e);
+    } else if (e.kind === 'squad') {
+      const purple = e.split || e.splitChild;
+      drawPack(purple ? 'purple' : 'red', SQUAD_PACK, Math.min(e.count, 80), e.x, d, state.t, 3.5, true);
       const top = proj(e.x, d + squadRadius(e.count) + 2);
-      pill(top.x, top.y - 4 * ppu * top.s, String(e.count), 4.6 * ppu * top.s + 4, 'rgba(160,30,30,0.9)');
+      pill(top.x, top.y - 4 * ppu * top.s, String(e.count), 4.6 * ppu * top.s + 4, purple ? 'rgba(110,40,170,0.92)' : 'rgba(160,30,30,0.9)');
+      if (e.shield > 0) feat.drawShield(state, e);
     } else {
       const a = proj(e.x0, d - 2.5), b = proj(e.x1, d - 2.5), c = proj(e.x1, d + 2.5), f = proj(e.x0, d + 2.5);
       const h = 5 * ppu * a.s;
@@ -284,14 +362,16 @@ export function createRenderer(canvas) {
     ctx.globalAlpha = fadeFor(d);
     ctx.fillStyle = 'rgba(0,0,0,0.2)';
     ctx.beginPath(); ctx.ellipse(q.x, q.y, r * 0.9, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = p.kind === 'rapid' ? '#ff9a1f' : '#a35cff';
+    ctx.fillStyle = POWER_COLORS[p.kind];
     ctx.beginPath(); ctx.arc(q.x, y, r, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = Math.max(1.5, r * 0.14);
     ctx.stroke();
     ctx.lineCap = 'round';
     ctx.beginPath();
-    if (p.kind === 'rapid') {
+    if (p.kind === 'rocket' || p.kind === 'laser' || p.kind === 'magnet') {
+      feat.drawWeaponIcon(p.kind, q.x, y, r);
+    } else if (p.kind === 'rapid') {
       for (const o of [-0.3, 0.25]) {
         ctx.moveTo(q.x - r * 0.35, y + r * (o + 0.2)); ctx.lineTo(q.x, y + r * (o - 0.15)); ctx.lineTo(q.x + r * 0.35, y + r * (o + 0.2));
       }
@@ -312,7 +392,17 @@ export function createRenderer(canvas) {
     if (d > VIEW || d < nearD) return;
     const hitT = state.t - b.lastHit;
     const shake = hitT < 0.08 ? (Math.random() - 0.5) * 1.2 : 0;
-    const q = proj(b.x + shake, d);
+    // Lean into a coming stomp; hop a little when throwing.
+    let lean = 0, hop = 0;
+    for (const a of state.bossAtks) {
+      if (a.done) continue;
+      const u = Math.min(1, (state.t - a.t0) / (a.tHit - a.t0));
+      if (a.kind === 'stomp') lean = (a.x0 < 10 ? -1 : 1) * 4 * u;
+      else hop = Math.max(hop, Math.sin(u * Math.PI) * 2);
+    }
+    const q0 = proj(b.x + shake + lean, d);
+    const q = { x: q0.x, y: q0.y - hop * ppu * q0.s, s: q0.s };
+    const angry = b.phase2 && b.alive;
     const R = b.r * ppu * q.s;
     ctx.globalAlpha = fadeFor(d) * (b.alive ? 1 : 0.35);
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
@@ -328,8 +418,13 @@ export function createRenderer(canvas) {
       ctx.closePath(); ctx.fill();
     }
     const grad = ctx.createRadialGradient(q.x - R * 0.3, cy - R * 0.4, R * 0.2, q.x, cy, R);
-    grad.addColorStop(0, hitT < 0.06 ? '#ff8a80' : '#e0453c');
-    grad.addColorStop(1, '#7d1612');
+    grad.addColorStop(0, hitT < 0.06 ? '#ff8a80' : angry ? '#ff3020' : '#e0453c');
+    grad.addColorStop(1, angry ? '#4d0806' : '#7d1612');
+    if (angry) {
+      // Red glow.
+      ctx.fillStyle = `rgba(255,60,30,${0.18 + 0.1 * Math.sin(state.t * 8)})`;
+      ctx.beginPath(); ctx.arc(q.x, cy, R * 1.25, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(q.x, cy, R, 0, Math.PI * 2); ctx.fill();
     // belly
@@ -357,7 +452,12 @@ export function createRenderer(canvas) {
       roundRect(bx - 2, by - 2, bw + 4, bh + 4, bh / 2 + 2); ctx.fill();
       ctx.fillStyle = '#ff4a4a';
       roundRect(bx, by, Math.max(0, bw * (b.hp / b.maxHp)), bh, bh / 2); ctx.fill();
-      outlinedText(`BOSS ${Math.ceil(b.hp)}`, q.x, by - bh * 1.1, Math.max(11, bh * 1.3), '#fff');
+      outlinedText(`${angry ? 'ANGRY ' : ''}BOSS ${Math.ceil(b.hp)}`, q.x, by - bh * 1.1, Math.max(11, bh * 1.3), angry ? '#ffb3a8' : '#fff');
+      if (b.attacks && !angry) {
+        // Notch at 50%: phase 2 starts there.
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fillRect(bx + bw / 2 - 1, by - 1, 2, bh + 2);
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -366,20 +466,33 @@ export function createRenderer(canvas) {
     ctx.fillStyle = COLORS.bullet;
     for (const b of state.bullets) {
       const d = b.y - state.dist;
-      if (d > VIEW) continue;
+      if (d > VIEW || b.rocket || b.laser) continue;
       const q = proj(b.x, d);
       const r = Math.max(2, 1.0 * ppu * q.s);
       const h = 3 * ppu * q.s;
       ctx.fillRect(q.x - r / 2, q.y - h - r * 4, r, r * 4);
     }
+    feat.drawSpecialShots(state);
   }
 
   function drawCrowd(state) {
     const c = state.crowd;
     if (c.count <= 0) return;
     const n = Math.min(c.count, RENDER_CAP);
-    drawPack('blue', CROWD_PACK, n, c.x, 0, state.t, 3.7, state.phase === 'run' || state.phase === 'boss');
-    const r = crowdRadius(c.count);
+    const spread = 1 - SQUEEZE_SHRINK * c.squeeze;
+    const r = crowdRadius(c.count) * spread;
+    if (c.squeeze > 0.05) {
+      // Gold ring on the ground while packed.
+      const a = proj(c.x - r - 1.5, 0), b = proj(c.x + r + 1.5, 0);
+      ctx.globalAlpha = Math.min(1, c.squeeze * 1.4);
+      ctx.strokeStyle = '#ffd23f';
+      ctx.lineWidth = Math.max(2, 0.6 * ppu);
+      ctx.beginPath();
+      ctx.ellipse((a.x + b.x) / 2, a.y, (b.x - a.x) / 2, (b.x - a.x) * 0.3, 0, 0, TAU);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    drawPack('blue', CROWD_PACK, n, c.x, 0, state.t, 3.7 * (0.8 + 0.2 * spread), state.phase === 'run' || state.phase === 'boss', spread);
     const px = Math.max(15, 6 * ppu);
     if (state.phase === 'boss' || state.phase === 'won') {
       // Under the crowd so it doesn't cover the boss.
@@ -412,6 +525,44 @@ export function createRenderer(canvas) {
     ctx.globalAlpha = 1;
   }
 
+  // Squeeze pad (bottom right). Its hit area is kept for the input module.
+  let padGeom = null;
+  function drawPad(state, x0, colW) {
+    const R = 36;
+    const x = x0 + colW - R - 16, y = H - R - 26;
+    padGeom = { x, y, r: R + 14 };
+    const on = state.crowd.packed;
+    ctx.fillStyle = on ? 'rgba(255,210,63,0.92)' : 'rgba(15,25,40,0.5)';
+    ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
+    ctx.strokeStyle = on ? '#fff' : 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    // Icon: two arrows pointing inward.
+    const ink = on ? '#14202e' : '#ffffff';
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (const sgn of [-1, 1]) {
+      const tip = x + sgn * 4, tail = x + sgn * 18;
+      ctx.moveTo(tail, y - 6); ctx.lineTo(tip, y - 6);
+      ctx.moveTo(tip + sgn * 6, y - 12); ctx.lineTo(tip, y - 6); ctx.lineTo(tip + sgn * 6, y);
+    }
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = ink;
+    ctx.font = font(10.5);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(on ? 'PACKED' : 'SQUEEZE', x, y + 13);
+  }
+
+  function hitPad(x, y) {
+    if (!padGeom) return false;
+    const dx = x - padGeom.x, dy = y - padGeom.y;
+    return dx * dx + dy * dy <= padGeom.r * padGeom.r;
+  }
+
   function drawHud(state, hud) {
     const pad = 10;
     const colW = Math.min(W, 520);
@@ -441,9 +592,12 @@ export function createRenderer(canvas) {
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     ctx.fillText(txt, cxp + 6, barY + 10);
+    if (hud.pad) drawPad(state, x0, colW);
+    else padGeom = null;
     // buffs
     let bx = barX;
-    for (const [k, label, col] of [['rapid', 'RAPID', '#ff9a1f'], ['spread', 'SPREAD', '#a35cff']]) {
+    for (const [k, label] of [['rapid', 'RAPID'], ['spread', 'SPREAD'], ['rocket', 'ROCKET'], ['laser', 'LASER'], ['magnet', 'MAGNET']]) {
+      const col = POWER_COLORS[k];
       const t = state.buffs[k];
       if (t <= 0) continue;
       const text = `${label} ${t.toFixed(1)}s`;
@@ -471,20 +625,40 @@ export function createRenderer(canvas) {
     for (const row of state.rows) if (!row.used) items.push([row.y, 0, row]);
     for (const e of state.enemies) if (e.alive) items.push([e.y, 1, e]);
     for (const p of state.powerups) if (!p.taken) items.push([p.y, 2, p]);
+    for (const h of state.hazards) if (h.y - state.dist > nearD - 12 && h.y - state.dist < VIEW) items.push([h.y, 3, h]);
+    for (const g of state.segments) if (g.kind === 'fork' && g.y0 - state.dist > 0 && g.y0 - state.dist < VIEW) items.push([g.y0, 4, g]);
+    for (const k of state.coinItems) {
+      if (k.taken) continue;
+      const d = k.y - state.dist;
+      if (d > VIEW) break;
+      if (d > nearD) items.push([k.y, 5, k]);
+    }
     items.sort((a, b) => b[0] - a[0]);
+    feat.drawArrowMarks(state);
+    feat.drawBossTelegraphs(state);
     drawBoss(state);
     for (const [, k, o] of items) {
       if (k === 0) drawGateRow(state, o);
       else if (k === 1) drawEnemy(state, o);
-      else drawPowerup(state, o);
+      else if (k === 2) drawPowerup(state, o);
+      else if (k === 3) feat.drawHazard(state, o);
+      else if (k === 4) feat.drawForkSigns(state, o);
+      else feat.drawCoin(state, o);
     }
     drawBullets(state);
+    feat.drawMagnetField(state);
     drawCrowd(state);
+    feat.drawBoulders(state);
+    feat.drawArrows(state);
     drawFx(state, fx);
     ctx.restore();
-    if (!hud.hidden) drawHud(state, hud);
+    if (hud.hidden) padGeom = null;
+    if (!hud.hidden) {
+      drawHud(state, hud);
+      feat.drawHint(fx);
+    }
   }
 
   resize();
-  return { resize, draw, get size() { return { W, H, ppu }; } };
+  return { resize, draw, hitPad, get size() { return { W, H, ppu }; } };
 }
