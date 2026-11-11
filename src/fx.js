@@ -15,7 +15,7 @@ const POWER_TEXT = {
 const DRAINS = new Set(['saw', 'crusher', 'fall']);
 
 export function createFx() {
-  const fx = { particles: [], texts: [], shake: 0, hint: null };
+  const fx = { particles: [], texts: [], shake: 0, hint: null, flash: 0 }; // flash: red screen-edge glow (s)
   const lossTexts = {};
   const coinRun = { n: 0, text: null }; // "+N" for a run of coins // cause -> live "−N" text, so steady drains show one growing number
 
@@ -66,7 +66,7 @@ export function createFx() {
         case 'crowdLoss': {
           const drainy = DRAINS.has(e.cause);
           fx.shake = Math.min(drainy ? 6 : 14, fx.shake + (drainy ? 1 : 3) + Math.min(8, e.n * 0.25));
-          if (e.cause !== 'boss') {
+          if (e.cause !== 'boss' && e.cause !== 'ambush') {
             const live = lossTexts[e.cause];
             if (drainy && live && live.life > 0.25 && fx.texts.includes(live)) {
               live.n += e.n;
@@ -130,6 +130,12 @@ export function createFx() {
         case 'arrowLand':
           if (!e.hit) burst(e.x, e.y, 6, '#b9b2a6', 14, 0.9);
           break;
+        case 'ambush':
+          text(`AMBUSH −${e.n}`, state.crowd.x, state.dist + 2, '#ff4d4d', 30, 1.2);
+          burst(e.x, state.dist - 4, Math.min(24, 8 + e.n), '#ff3b30', 28, 1.3);
+          fx.flash = 0.6;
+          fx.shake = Math.min(14, fx.shake + 6);
+          break;
         case 'hint':
           fx.hint = { title: e.title, sub: e.sub, life: 3.2, max: 3.2 };
           break;
@@ -157,6 +163,7 @@ export function createFx() {
 
   fx.update = (dt) => {
     fx.shake = Math.max(0, fx.shake - dt * 30);
+    fx.flash = Math.max(0, fx.flash - dt);
     for (const p of fx.particles) {
       p.life -= dt;
       p.x += p.vx * dt;
@@ -170,6 +177,6 @@ export function createFx() {
     fx.texts = fx.texts.filter((t) => t.life > 0 && t.text);
   };
 
-  fx.clear = () => { fx.particles.length = 0; fx.texts.length = 0; fx.shake = 0; fx.hint = null; };
+  fx.clear = () => { fx.particles.length = 0; fx.texts.length = 0; fx.shake = 0; fx.hint = null; fx.flash = 0; };
   return fx;
 }

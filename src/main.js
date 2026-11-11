@@ -13,6 +13,11 @@
 //                  appearance (unless ?t is given); ?after=S tunes how far past
 //                  the hint to stop (default 2.5 s)
 //   ?bench=N       after fast-forwarding, time N frames; result in the page title
+//   ?ups=C,R,D     play with these upgrade levels (crowd, rate, damage); not saved
+//   ?x=N           (screenshots) start the crowd at x=N (0..100); without
+//                  ?demo it then holds that line, so enemies slip past
+//   ?perf=1        record round-start timings (startLevel parts and the first
+//                  frames after it) in crowdRunner.perf
 
 import { DT, FEATURES, SQUEEZE_LEVEL } from './config.js';
 import { generateLevel, DEFAULT_SEED } from './level.js';
@@ -28,7 +33,8 @@ import {
 
 const params = new URLSearchParams(location.search);
 const DEMO = params.get('demo') === '1';
-const NOSAVE = DEMO || params.get('nosave') === '1';
+const UPS = params.get('ups') ? params.get('ups').split(',').map((v) => parseInt(v, 10) || 0) : null;
+const NOSAVE = DEMO || !!UPS || params.get('nosave') === '1';
 const SEED = params.get('seed') || DEFAULT_SEED;
 const FF_T = parseFloat(params.get('t') || '0') || 0;
 const FF_BOSS = params.get('boss') === '1';
@@ -44,6 +50,7 @@ const storage = (() => {
 let save = storage ? loadSave(storage) : defaultSave();
 if (params.get('level')) save.level = Math.max(1, parseInt(params.get('level'), 10) || 1);
 if (FEATURE) save.level = FEATURES[FEATURE];
+if (UPS) save.upgrades = { crowd: UPS[0] || 0, rate: UPS[1] || 0, dmg: UPS[2] || 0 };
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -70,17 +77,91 @@ function demoUpgrades(lv) {
   return { crowd: Math.min(30, lv - 1), rate: Math.min(20, lv - 1), dmg: Math.min(10, Math.floor(lv / 3)) };
 }
 
+// ?perf=1: round-start timings. Each start records how long startLevel's parts
+// took, then per-frame gaps and work for the next frames (and some later
+// "steady" frames to compare against).
+const PERF = params.get('perf') === '1' ? { starts: [] } : null;
+let perfRec = null;
+
+// ---------- smooth round starts ----------
+// Round starts used to hitch: the click handler generated the level, the first
+// play frame was the first time the HUD's fonts and the sim/bot code ran (cold
+// glyph caches and JIT), and a slow first frame made the loop catch up with
+// several sim steps at once. So: the next level is generated ahead of time
+// while a screen is showing, everything is warmed up once while the menu is
+// idle, and the first frames after a start never catch up.
+let nextDef = null; // { key, def } generated ahead for the level about to be played
+const defKey = () => `${SEED}|${save.level}`;
+function levelDef() {
+  if (!nextDef || nextDef.key !== defKey()) nextDef = { key: defKey(), def: generateLevel(SEED, save.level) };
+  return nextDef.def; // createRun deep-copies it, so it can be reused for retries
+}
+const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 300 }) : setTimeout(fn, 50));
+// The run itself is also built ahead (createRun deep-copies the level); it's
+// only used if the level and upgrades still match when the round starts.
+let nextRun = null; // { key, run }
+const runKey = () => `${defKey()}|${JSON.stringify(DEMO ? demoUpgrades(save.level) : save.upgrades)}`;
+function freshRun() {
+  const key = runKey();
+  const ready = nextRun && nextRun.key === key ? nextRun.run : null;
+  nextRun = null;
+  return ready || createRun(levelDef(), DEMO ? demoUpgrades(save.level) : save.upgrades);
+}
+function prepareNext() {
+  idle(() => {
+    levelDef();
+    if (!nextRun || nextRun.key !== runKey()) nextRun = { key: runKey(), run: createRun(levelDef(), DEMO ? demoUpgrades(save.level) : save.upgrades) };
+  });
+}
+
+// Run the sim, bot, effects and a full HUD frame once on a throwaway copy, then
+// redraw the real frame. Done once, while the menu is idle.
+let warmed = false;
+function warmUp() {
+  if (warmed || !state) return;
+  warmed = true;
+  // In two idle slices: sim + bot + effects first, then one full frame.
+  const t0 = performance.now();
+  const ghost = createRun(levelDef(), demoUpgrades(Math.max(save.level, 6)));
+  for (let i = 0; i < 90; i++) step(ghost, botInput(ghost));
+  ghost.events.push({ type: 'hint', title: 'WARM', sub: 'up' }, { type: 'powerup', kind: 'rapid', x: 50, y: ghost.dist });
+  if (PERF) PERF.warmSim = performance.now() - t0;
+  idle(() => {
+    const t1 = performance.now();
+    prepareNext();
+    fx.consume(ghost.events, ghost);
+    fx.update(DT);
+    ghost.buffs.rapid = 1;
+    renderer.draw(ghost, fx, { bankedCoins: 0, pad: true });
+    fx.clear();
+    drawNow(); // the real frame goes on top before anything is shown
+    if (PERF) PERF.warmDraw = performance.now() - t1;
+  });
+}
+
+let settle = 0; // frames after a start that don't try to catch up on lost time
+
 function startLevel() {
-  const def = generateLevel(SEED, save.level);
-  state = createRun(def, DEMO ? demoUpgrades(save.level) : save.upgrades);
+  const t0 = performance.now();
+  const def = levelDef();
+  const t1 = performance.now();
+  state = freshRun();
+  const t2 = performance.now();
   fx.clear();
   input.reset();
   banked = false;
   endTimer = 0;
   acc = 0;
+  settle = 3;
   mode = 'play';
   showScreen(null);
+  const t3 = performance.now();
   audio.unlock();
+  const t4 = performance.now();
+  if (PERF) {
+    perfRec = { level: save.level, gen: t1 - t0, run: t2 - t1, dom: t3 - t2, audio: t4 - t3, total: t4 - t0, at: t0, frames: [] };
+    PERF.starts.push(perfRec);
+  }
 }
 
 function bank() {
@@ -89,6 +170,7 @@ function bank() {
   const won = state.phase === 'won';
   save = recordRun(save, { won, coins: state.coins });
   persist();
+  prepareNext(); // build the next round while the result shows
 }
 
 // ---------- screens ----------
@@ -128,7 +210,7 @@ function renderShop(container) {
     btn.innerHTML = maxed ? 'MAX' : `<i class="coin"></i>${cost}`;
     btn.addEventListener('click', () => {
       const s2 = buyUpgrade(save, key);
-      if (s2) { save = s2; persist(); refreshScreens(); }
+      if (s2) { save = s2; persist(); refreshScreens(); prepareNext(); }
     });
     row.appendChild(btn);
     container.appendChild(row);
@@ -155,6 +237,7 @@ function showEnd() {
   refreshScreens();
   mode = 'end';
   showScreen('screen-end');
+  prepareNext();
 }
 
 function pause() {
@@ -180,10 +263,10 @@ function toggleSound() {
 
 $('start-go').addEventListener('click', startLevel);
 $('end-go').addEventListener('click', startLevel);
-$('end-menu').addEventListener('click', () => { mode = 'menu'; refreshScreens(); showScreen('screen-start'); });
+$('end-menu').addEventListener('click', () => { mode = 'menu'; refreshScreens(); showScreen('screen-start'); prepareNext(); });
 $('pauseBtn').addEventListener('click', pause);
 $('pause-resume').addEventListener('click', resume);
-$('pause-quit').addEventListener('click', () => { mode = 'menu'; refreshScreens(); showScreen('screen-start'); });
+$('pause-quit').addEventListener('click', () => { mode = 'menu'; refreshScreens(); showScreen('screen-start'); prepareNext(); });
 for (const el of document.querySelectorAll('.sound-toggle')) el.addEventListener('click', toggleSound);
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
 window.addEventListener('keydown', (e) => {
@@ -220,9 +303,17 @@ function drawNow() {
 function frame(now) {
   // Schedule first, so an error in one frame can't stop the game loop.
   requestAnimationFrame(frame);
-  const dt = Math.min(0.1, (now - last) / 1000);
+  let dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  if (settle > 0 && mode === 'play') {
+    // Just started: run at most one step per frame instead of catching up on
+    // the time the start itself took (which would make things jump).
+    settle -= 1;
+    dt = Math.min(dt, DT);
+  }
 
+  const pf = perfRec && perfRec.frames.length < 400 ? { gap: now - (perfRec.prev ?? perfRec.at), dt, steps: 0 } : null;
+  let pt = pf ? performance.now() : 0;
   if (state && (mode === 'play' || mode === 'end') && !frozen) {
     if (state.phase === 'run' || state.phase === 'boss') {
       acc += dt;
@@ -233,6 +324,7 @@ function frame(now) {
         n += 1;
       }
       if (n === 6) acc = 0; // fell behind; drop time rather than spiral
+      if (pf) pf.steps = n;
     } else if (mode === 'play') {
       bank();
       endTimer += dt;
@@ -242,13 +334,20 @@ function frame(now) {
       }
     }
   }
+  if (pf) { const t = performance.now(); pf.sim = t - pt; pt = t; }
   if (state && state.events.length) {
     fx.consume(state.events, state);
     audio.play(state.events);
     state.events.length = 0;
   }
   fx.update(mode === 'paused' ? 0 : dt);
+  if (pf) { const t = performance.now(); pf.fx = t - pt; pt = t; }
   drawNow();
+  if (pf) {
+    pf.draw = performance.now() - pt;
+    perfRec.frames.push(pf);
+    perfRec.prev = now;
+  }
   if (debugEl) debugTick(now);
 }
 
@@ -271,6 +370,9 @@ if (debugEl) {
 
 // Read-only hook for debugging and automated checks.
 window.crowdRunner = {
+  perf: PERF,
+  fx,
+  start: () => startLevel(),
   get state() { return state; },
   get mode() { return mode; },
   get save() { return save; },
@@ -299,6 +401,7 @@ function boot() {
   refreshScreens();
   if (DEMO || FF_T > 0 || FF_BOSS || FEATURE) {
     startLevel();
+    if (params.get('x')) state.crowd.x = Math.max(6, Math.min(94, parseFloat(params.get('x')) || 50));
     if (FEATURE && !(FF_T > 0) && !FF_BOSS) {
       // Run until the mechanic's hint shows, then a little longer.
       let guard = 0;
@@ -332,8 +435,10 @@ function boot() {
     if (FREEZE && (state.phase === 'won' || state.phase === 'lost')) { bank(); showEnd(); }
   } else {
     // Menu backdrop: a static peek at the level.
-    state = createRun(generateLevel(SEED, save.level), save.upgrades);
+    state = createRun(levelDef(), save.upgrades);
     showScreen('screen-start');
+    // Warm everything up once the menu has painted (skipped with ?nowarm=1, for timing comparisons).
+    if (params.get('nowarm') !== '1') requestAnimationFrame(() => idle(warmUp));
   }
   requestAnimationFrame(frame);
 }

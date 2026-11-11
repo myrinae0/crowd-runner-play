@@ -6,7 +6,9 @@
 
 import { applyGate, previewHits } from './gates.js';
 import { crowdRadius, squadRadius } from './combat.js';
-import { RAPID_MULT, SAW_R, X_MIN, X_MAX, SQUEEZE_SHRINK, ARROW_R } from './config.js';
+import { RAPID_MULT, SAW_R, X_MIN, X_MAX, SQUEEZE_SHRINK, ARROW_R, AMBUSH_FROM, AMBUSH_MULT } from './config.js';
+
+const ambushMult = (s) => (s.level >= AMBUSH_FROM ? AMBUSH_MULT : 1);
 import { volleyStreams, enemyX, enemyRadius, contactCost } from './sim.js';
 import { sawX, crusherLift, chordOverlapFrac, slideOffset, swapCount } from './hazards.js';
 
@@ -136,15 +138,15 @@ export function botInput(s) {
       // Open lane (single-gate rows).
       if (at.length === 1) lanes.push({ x: at[0].x0 > 50 - (at[0].x1 - 50) ? at[0].x0 / 2 : (at[0].x1 + 100) / 2, score: c.count });
       for (const lane of lanes) {
-        // Penalise enemies standing between us and that lane.
+        // Penalise enemies between us and that lane: met head-on in the lane,
+        // or (v3) ambushing us for double if the lane goes past them.
         for (const e of s.enemies) {
           if (!e.alive || e.y < s.dist || e.y > row.y) continue;
           const ex = enemyX(e);
           const half = e.x !== undefined ? enemyRadius(e) : (e.x1 - e.x0) / 2;
-          if (Math.abs(ex - lane.x) < half + r) {
-            const n = contactCost(e) + (e.shield || 0);
-            lane.score -= Math.max(0, n - shotsUntil(s, e.y - s.dist) * s.stats.damage * 0.6);
-          }
+          const n = Math.max(0, contactCost(e) + (e.shield || 0) - shotsUntil(s, e.y - s.dist) * s.stats.damage * 0.6);
+          if (Math.abs(ex - lane.x) < half + r) lane.score -= n;
+          else if (e.x !== undefined) lane.score -= n * ambushMult(s);
         }
         if (!best || lane.score > best.score) best = lane;
       }
@@ -165,15 +167,42 @@ export function botInput(s) {
     const pu = s.powerups.find((p) => !p.taken && p.y > s.dist + 3 && p.y - s.dist < 70
       && (!row || p.y < row.y - 15) && Math.abs(p.x - c.x) < ((p.y - s.dist) / s.speed) * 55);
     if (pu) target = pu.x;
-    // Dodge anything about to touch us that we won't kill in time.
-    for (const e of s.enemies) {
-      if (!e.alive || e.y < s.dist || e.y - s.dist > 30) continue;
-      if (e.x !== undefined) {
+    // Squads and giants coming at us: from AMBUSH_FROM on, letting one past
+    // costs double, so line up with one (to shoot it, then take what's left
+    // head-on). Pick the line-up that costs least overall. Before that level,
+    // dodge the ones we can't beat, like v2 did.
+    const meet = ambushMult(s) > 1;
+    if (meet) {
+      const threats = s.enemies.filter((e) => e.alive && e.x !== undefined && e.y > s.dist - 2 && e.y - s.dist < 110
+        && !(row && row.y < e.y && e.y - s.dist > 45 + r)); // a gate row first: deal with it after
+      if (threats.length) {
+        const dmg = s.stats.damage;
+        const left = (e) => Math.max(0, contactCost(e) + (e.shield || 0) - shotsUntil(s, e.y - s.dist) * dmg * 0.8);
+        let bestX = null, bestCost = Infinity;
+        for (const t of threats) {
+          let cost = Math.abs(t.x - c.x) * 0.05; // prefer less steering
+          for (const o of threats) {
+            const lined = Math.abs(o.x - t.x) < enemyRadius(o) + r * 0.8;
+            cost += lined ? (o === t ? left(o) : contactCost(o)) : ambushMult(s) * left(o);
+          }
+          if (cost < bestCost) { bestCost = cost; bestX = t.x; }
+        }
+        const urgent = threats.some((e) => e.y - s.dist < 45 + r);
+        if (!row || urgent || row.y > Math.min(...threats.map((e) => e.y))) target = bestX;
+      }
+    } else {
+      for (const e of s.enemies) {
+        if (!e.alive || e.x === undefined || e.y < s.dist || e.y - s.dist > 30) continue;
         const n = contactCost(e) + (e.shield || 0);
         if (n * 2 < c.count) continue;
         const gap = enemyRadius(e) + r + 2;
         if (Math.abs(target - e.x) < gap) target = e.x + (target >= e.x ? gap : -gap);
-      } else if (target + r > e.x0 && target - r < e.x1 && e.hp * 2 >= c.count) {
+      }
+    }
+    // Walls and towers don't ambush: still go around the ones we can't break.
+    for (const e of s.enemies) {
+      if (!e.alive || e.x !== undefined || e.y < s.dist || e.y - s.dist > 30) continue;
+      if (target + r > e.x0 && target - r < e.x1 && e.hp * 2 >= c.count) {
         target = e.x0 < 10 ? e.x1 + r + 1 : e.x0 - r - 1;
       }
     }

@@ -73,6 +73,7 @@ export function createAudio() {
           case 'bossPhase2': blip(150, 0.5, 'sawtooth', 0.08, 120); break;
           case 'coin': if (now - lastCoin > 50) { blip(1320, 0.06, 'triangle', 0.035); lastCoin = now; } break;
           case 'boom': blip(120, 0.18, 'sawtooth', 0.06, -60); break;
+          case 'ambush': blip(160, 0.3, 'sawtooth', 0.08, -110); break;
           case 'arrowFire': blip(1200, 0.12, 'sine', 0.03, -700); break;
           case 'hint': blip(700, 0.12, 'triangle', 0.05, 200); break;
           case 'squeeze': if (e.on) blip(330, 0.06, 'triangle', 0.04, 120); break;

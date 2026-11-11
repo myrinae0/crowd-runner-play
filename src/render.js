@@ -19,7 +19,12 @@ export const COLORS = {
   bullet: '#ffd23f', coin: '#ffc934', text: '#ffffff', ink: '#14202e',
 };
 
-const font = (px) => FONT.replace('{px}', Math.max(6, Math.round(px)));
+// Font strings, built once per pixel size (canvas text calls this a lot).
+const FONTS = [];
+const font = (px) => {
+  const n = Math.max(6, Math.round(px));
+  return FONTS[n] || (FONTS[n] = FONT.replace('{px}', n));
+};
 
 // Vogel (sunflower) packing, sorted far-to-near for painter's order.
 function packOffsets(n, spacing) {
@@ -40,6 +45,9 @@ const TEAMS = {
   purple: { body: '#a24bf0', dark: '#5e1f99' }, // splitters
 };
 const TAU = Math.PI * 2;
+const ITEM_POOL = [];
+const ITEMS = [];
+const farFirst = (a, b) => b[0] - a[0];
 const POWER_COLORS = { rapid: '#ff9a1f', spread: '#a35cff', rocket: '#ef4b3a', laser: '#16b8dc', magnet: '#e0409a' };
 
 export function createRenderer(canvas) {
@@ -324,7 +332,9 @@ export function createRenderer(canvas) {
       const purple = e.split || e.splitChild;
       drawPack(purple ? 'purple' : 'red', SQUAD_PACK, Math.min(e.count, 80), e.x, d, state.t, 3.5, true);
       const top = proj(e.x, d + squadRadius(e.count) + 2);
-      pill(top.x, top.y - 4 * ppu * top.s, String(e.count), 4.6 * ppu * top.s + 4, purple ? 'rgba(110,40,170,0.92)' : 'rgba(160,30,30,0.9)');
+      // Past the sprite cap (80) the number does the talking: make it bigger.
+      const big = e.count > 80 ? 1.35 : 1;
+      pill(top.x, top.y - 4 * ppu * top.s * big, String(e.count), (4.6 * ppu * top.s + 4) * big, purple ? 'rgba(110,40,170,0.92)' : 'rgba(160,30,30,0.9)');
       if (e.shield > 0) feat.drawShield(state, e);
     } else {
       const a = proj(e.x0, d - 2.5), b = proj(e.x1, d - 2.5), c = proj(e.x1, d + 2.5), f = proj(e.x0, d + 2.5);
@@ -620,24 +630,35 @@ export function createRenderer(canvas) {
     ctx.translate(sx, sy);
     drawGround(state);
 
-    // Painter's order: far to near.
-    const items = [];
-    for (const row of state.rows) if (!row.used) items.push([row.y, 0, row]);
-    for (const e of state.enemies) if (e.alive) items.push([e.y, 1, e]);
-    for (const p of state.powerups) if (!p.taken) items.push([p.y, 2, p]);
-    for (const h of state.hazards) if (h.y - state.dist > nearD - 12 && h.y - state.dist < VIEW) items.push([h.y, 3, h]);
-    for (const g of state.segments) if (g.kind === 'fork' && g.y0 - state.dist > 0 && g.y0 - state.dist < VIEW) items.push([g.y0, 4, g]);
+    // Painter's order: far to near. Only what's in view, in reused slots, so a
+    // frame allocates next to nothing (less garbage, fewer GC pauses).
+    let n = 0;
+    const lo = state.dist + nearD - 12, hi = state.dist + VIEW + 2;
+    const add = (y, k, o) => {
+      const it = ITEM_POOL[n] || (ITEM_POOL[n] = [0, 0, null]);
+      it[0] = y; it[1] = k; it[2] = o;
+      n += 1;
+    };
+    for (const row of state.rows) if (!row.used && row.y > lo && row.y < hi) add(row.y, 0, row);
+    for (const e of state.enemies) if (e.alive && e.y > lo && e.y < hi) add(e.y, 1, e);
+    for (const p of state.powerups) if (!p.taken && p.y > lo && p.y < hi) add(p.y, 2, p);
+    for (const h of state.hazards) if (h.y > lo && h.y < hi) add(h.y, 3, h);
+    for (const g of state.segments) if (g.kind === 'fork' && g.y0 - state.dist > 0 && g.y0 - state.dist < VIEW) add(g.y0, 4, g);
     for (const k of state.coinItems) {
       if (k.taken) continue;
       const d = k.y - state.dist;
       if (d > VIEW) break;
-      if (d > nearD) items.push([k.y, 5, k]);
+      if (d > nearD) add(k.y, 5, k);
     }
-    items.sort((a, b) => b[0] - a[0]);
+    const items = ITEMS;
+    items.length = 0;
+    for (let i = 0; i < n; i++) items.push(ITEM_POOL[i]);
+    items.sort(farFirst);
     feat.drawArrowMarks(state);
     feat.drawBossTelegraphs(state);
     drawBoss(state);
-    for (const [, k, o] of items) {
+    for (let i = 0; i < n; i++) {
+      const k = items[i][1], o = items[i][2];
       if (k === 0) drawGateRow(state, o);
       else if (k === 1) drawEnemy(state, o);
       else if (k === 2) drawPowerup(state, o);
@@ -654,6 +675,8 @@ export function createRenderer(canvas) {
     ctx.restore();
     if (hud.hidden) padGeom = null;
     if (!hud.hidden) {
+      feat.drawAmbushFlash(fx);
+      feat.drawAmbushWarnings(state);
       drawHud(state, hud);
       feat.drawHint(fx);
     }

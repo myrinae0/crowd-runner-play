@@ -80,3 +80,17 @@ export const MAGNET_R = 55;          // magnet pulls coins this close
 export const ROCKET_EVERY = 0.4;     // seconds between rockets
 export const ROCKET_SPLASH = 10;     // rocket blast radius
 export const ROCKET_DMG = 4;         // rocket damage = bullet damage * this
+
+// ---- v3: army penalties -------------------------------------------------
+// From AMBUSH_FROM on, enemy squads are sized as a share of the player's crowd
+// when they come into view (never smaller than their level-based size), and
+// any enemy that gets past the crowd alive "ambushes" it for AMBUSH_MULT times
+// its remaining strength. Bosses are unchanged.
+export const AMBUSH_FROM = 3;
+export const AMBUSH_MULT = 2;
+export const SCALE_SHARE_MIN = 0.15;  // squad size as a share of the crowd at AMBUSH_FROM...
+export const SCALE_SHARE_MAX = 0.5;   // ...rising to this by SCALE_FULL_LEVEL
+export const SCALE_FULL_LEVEL = 12;
+export const SCALE_FREE = 100;        // the first this-many soldiers don't count toward the share
+export const SCALE_VIEW = 175;        // squads are sized when this close (the view distance)
+export const AMBUSH_WARN = 25;        // warning arrow when a squad this close will slip past

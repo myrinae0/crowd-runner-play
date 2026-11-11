@@ -9,7 +9,8 @@ import {
   BUFF_TIME, RAPID_MULT, ENEMY_WAKE, ENEMY_MARCH, SOLDIER_DPS, MAX_STREAMS, STREAM_EVERY,
   HINT_AHEAD, SAW_R, SAW_RATE, CRUSH_RATE, MIN_LOSS_RATE, FALL_RATE,
   ARROW_FLIGHT, ARROW_R, TOWER_RANGE, GAMBLE_REVEAL,
-  COIN_R, MAGNET_R, ROCKET_EVERY, ROCKET_SPLASH, ROCKET_DMG, SQUEEZE_SHRINK, SQUEEZE_RATE, SQUEEZE_FIRE,
+  COIN_R, MAGNET_R, ROCKET_EVERY, ROCKET_SPLASH, ROCKET_DMG,
+  AMBUSH_FROM, AMBUSH_MULT, SCALE_SHARE_MIN, SCALE_SHARE_MAX, SCALE_FULL_LEVEL, SCALE_VIEW, SCALE_FREE, SQUEEZE_SHRINK, SQUEEZE_RATE, SQUEEZE_FIRE,
 } from './config.js';
 import {
   sawX, crusherDangerous, chordOverlapFrac, discOutsideFrac, segmentAt, slideOffset, swapCount,
@@ -127,6 +128,44 @@ function gateAt(row, x) {
   return null;
 }
 
+// v3: squads are sized from the crowd they're about to meet.
+export function squadShare(level) {
+  if (level < AMBUSH_FROM) return 0;
+  const k = Math.min(1, (level - AMBUSH_FROM) / (SCALE_FULL_LEVEL - AMBUSH_FROM));
+  return SCALE_SHARE_MIN + (SCALE_SHARE_MAX - SCALE_SHARE_MIN) * k;
+}
+
+// Size a squad as it comes into view: a share of the crowd right now, but never
+// smaller than the level made it. Squads arriving together split that share,
+// so a group adds up to about one share (four squads at once each sized off
+// the whole crowd would be an unwinnable wipe). Shields grow with it.
+// Deterministic: it only depends on the sim state.
+export function scaledSize(s, e) {
+  let group = 0;
+  for (const o of s.enemies) {
+    if (o.alive && o.kind === 'squad' && !o.splitChild && o.y > s.dist && o.y - s.dist < SCALE_VIEW + 60) group += 1;
+  }
+  const counted = Math.max(0, s.crowd.count - SCALE_FREE); // small crowds keep v2-sized squads
+  return Math.round((counted * squadShare(s.level)) / Math.max(1, group));
+}
+
+function scaleSquad(s, e) {
+  e.scaled = true;
+  if (e.splitChild) return;
+  const want = scaledSize(s, e);
+  if (want <= e.count) return;
+  e.base = e.base ?? e.count;
+  if (e.shield > 0) e.shield = e.shieldMax = Math.max(e.shieldMax || 0, Math.round(want * 0.7));
+  e.count = want;
+  e.start = want;
+}
+
+// What an enemy that gets past the crowd costs (0 before AMBUSH_FROM).
+export function ambushCost(s, e) {
+  if (s.level < AMBUSH_FROM) return 0;
+  return AMBUSH_MULT * contactCost(e);
+}
+
 // Enemies with a centre point (squads, giants) vs flat ones (walls, towers).
 export const enemyX = (e) => (e.x !== undefined ? e.x : (e.x0 + e.x1) / 2);
 export const enemyRadius = (e) => (e.kind === 'giant' ? GIANT_R : squadRadius(e.count));
@@ -153,7 +192,9 @@ function killEnemyUnits(s, e, dmg) {
     emit(s, { type: 'enemyHit', x: e.x, y: e.y, kind: 'squad' });
     if (e.count <= 0) {
       e.alive = false;
-      s.coins += Math.ceil(e.start / 3);
+      // Scaled-up squads pay their level-based coins plus a little for the extra.
+      const base = e.base ?? e.start;
+      s.coins += Math.ceil(base / 3) + Math.floor((e.start - base) / 30);
       emit(s, { type: 'kill', x: e.x, y: e.y, n: e.start });
     } else if (e.split && e.count >= 2) {
       // Splitters: the first hit breaks them into two squads that peel apart.
@@ -560,6 +601,7 @@ export function step(s, input = {}) {
     for (const e of s.enemies) {
       if (!e.alive) continue;
       const round = e.kind === 'squad' || e.kind === 'giant';
+      if (e.kind === 'squad' && !e.scaled && e.y - s.dist < SCALE_VIEW && s.level >= AMBUSH_FROM) scaleSquad(s, e);
       if (round && e.y - s.dist < ENEMY_WAKE && e.y > s.dist
         && !segmentAt(s.segments, 'bridge', e.y - 1)) { // squads don't wade into the water
         e.y -= (e.kind === 'giant' ? GIANT_MARCH : ENEMY_MARCH) * DT;
@@ -576,8 +618,16 @@ export function step(s, input = {}) {
         e.alive = false;
         loseCrowd(s, res.lost, round ? e.x : c.x, e.y, e.kind);
         emit(s, { type: 'kill', x: enemyX(e), y: e.y, n: res.lost, wall: !round, kind: e.kind, melee: true });
+      } else if (round && e.y < s.dist - r - enemyRadius(e)) {
+        // Got past the crowd alive: it hits from behind, twice as hard.
+        e.alive = false;
+        const n = Math.min(c.count, ambushCost(s, e));
+        if (n > 0) {
+          emit(s, { type: 'ambush', n, x: e.x, y: e.y, kind: e.kind });
+          loseCrowd(s, n, e.x, s.dist, 'ambush');
+        }
       } else if (e.y < s.dist - 40) {
-        e.alive = false; // passed behind the crowd
+        e.alive = false; // walls and towers just stay behind
       }
     }
 

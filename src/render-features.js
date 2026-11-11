@@ -1,8 +1,9 @@
 // Drawing for the v2 mechanics (hazards, road features, new enemies, projectiles).
 // Gets the renderer's helpers through `V` and reads sim state only.
 
-import { SAW_R, ARROW_R } from './config.js';
-import { squadRadius } from './combat.js';
+import { SAW_R, ARROW_R, AMBUSH_FROM, AMBUSH_WARN } from './config.js';
+import { squadRadius, crowdRadius } from './combat.js';
+import { SQUEEZE_SHRINK } from './config.js';
 import { sawX, crusherLift, crusherWarn } from './hazards.js';
 
 const TAU = Math.PI * 2;
@@ -618,6 +619,65 @@ export function createFeatureDrawer(V) {
     ctx.stroke();
   }
 
+  // ---- v3 ambush: warning chevrons and the red edge flash
+  // A squad (or giant) about to slip past the crowd without meeting it gets a
+  // pulsing red chevron at the bottom edge, under its x.
+  function drawAmbushWarnings(state) {
+    if (state.level < AMBUSH_FROM || state.phase !== 'run') return;
+    const c = state.crowd;
+    const r = crowdRadius(c.count) * (1 - SQUEEZE_SHRINK * c.squeeze);
+    const { W, H } = V;
+    const pulse = 0.65 + 0.35 * Math.sin(state.t * 14);
+    for (const e of state.enemies) {
+      if (!e.alive || e.x === undefined) continue;
+      const dy = e.y - state.dist;
+      if (dy < -r || dy > AMBUSH_WARN + r) continue;
+      const er = e.kind === 'giant' ? 6 : squadRadius(e.count);
+      if (Math.abs(e.x - c.x) < r + er * 0.6) continue; // lined up: it'll be met head-on
+      const x = Math.max(24, Math.min(W - 24, V.proj(e.x, 0).x));
+      const y = H - 20;
+      ctx.globalAlpha = pulse;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      for (const [k, col, lw] of [[0, 'rgba(40,0,0,0.85)', 10], [1, '#ff3b30', 5]]) {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = lw;
+        ctx.beginPath();
+        for (const o of [-14, 0]) {
+          ctx.moveTo(x - 13, y + o - 6); ctx.lineTo(x, y + o + 6); ctx.lineTo(x + 13, y + o - 6);
+        }
+        ctx.stroke();
+        if (k) break;
+      }
+      ctx.lineCap = 'butt';
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Red glow along the screen edges after an ambush. Kept to thin edge bands
+  // (no full-screen fill or strobe) so it can't flicker on mobile Firefox.
+  function drawAmbushFlash(fx) {
+    if (!(fx.flash > 0)) return;
+    const { W, H } = V;
+    const a = Math.min(1, fx.flash / 0.4) * 0.45;
+    const band = Math.min(48, W * 0.1);
+    const side = (x0, x1) => {
+      const g = ctx.createLinearGradient(x0, 0, x1, 0);
+      g.addColorStop(0, `rgba(255,30,20,${a})`);
+      g.addColorStop(1, 'rgba(255,30,20,0)');
+      return g;
+    };
+    ctx.fillStyle = side(0, band);
+    ctx.fillRect(0, 0, band, H);
+    ctx.fillStyle = side(W, W - band);
+    ctx.fillRect(W - band, 0, band, H);
+    const gb = ctx.createLinearGradient(0, H, 0, H - band);
+    gb.addColorStop(0, `rgba(255,30,20,${a})`);
+    gb.addColorStop(1, 'rgba(255,30,20,0)');
+    ctx.fillStyle = gb;
+    ctx.fillRect(0, H - band, W, band);
+  }
+
   function drawHazard(state, h) {
     if (h.kind === 'saw') drawSaw(state, h);
     else if (h.kind === 'crusher') drawCrusher(state, h);
@@ -643,5 +703,5 @@ export function createFeatureDrawer(V) {
     ctx.globalAlpha = 1;
   }
 
-  return { drawCoin, drawWeaponIcon, drawSpecialShots, drawMagnetField, drawGiant, drawShield, drawBossTelegraphs, drawBoulders, drawHazard, drawHint, drawBridges, drawForks, drawForkSigns, drawTower, drawArrowMarks, drawArrows };
+  return { drawAmbushWarnings, drawAmbushFlash, drawCoin, drawWeaponIcon, drawSpecialShots, drawMagnetField, drawGiant, drawShield, drawBossTelegraphs, drawBoulders, drawHazard, drawHint, drawBridges, drawForks, drawForkSigns, drawTower, drawArrowMarks, drawArrows };
 }

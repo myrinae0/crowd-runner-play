@@ -2,7 +2,7 @@
 
 import { createRng, hashSeed } from './rng.js';
 import { addGate, mulGate, gambleGate } from './gates.js';
-import { BOSS_R, FEATURES, TOWER_W, SOLDIER_DPS } from './config.js';
+import { BOSS_R, FEATURES, TOWER_W, SOLDIER_DPS, AMBUSH_FROM } from './config.js';
 
 export const DEFAULT_SEED = 'chimaek';
 
@@ -24,6 +24,9 @@ export const HINTS = {
   splitters: ['SPLITTERS!', 'Purple squads split in two when hit'],
   weapons: ['WEAPON PICKUPS!', 'Rocket, laser (through gates), magnet'],
 };
+
+// v3: shown once, on the level where squads start scaling and ambushing.
+export const AMBUSH_HINT = ["DON'T LET THEM PASS!", 'Enemies that get by hit twice as hard'];
 
 export const hasFeature = (level, f) => level >= FEATURES[f];
 
@@ -229,8 +232,12 @@ export function generateLevel(seed = DEFAULT_SEED, level = 1) {
   const forcedSlots = intro && SEGMENT_FEATURES.includes(intro) ? [330, p.length * 0.42, p.length * 0.72] : [];
   let forcedK = 0;
   const ROOM = { fork: 360, bridge: 280 }; // road a segment needs before the boss
+  // Things you have to shoot (v3: they can't be dodged for free) never come
+  // straight off a bridge, where the crowd can't line up with them.
+  const NEEDS_AIM = new Set(['giants', 'archers']);
+  let lastSeg = null;
   const pickSegment = (y) => {
-    const fits = (f) => y < p.length - (ROOM[f] || 220);
+    const fits = (f) => y < p.length - (ROOM[f] || 220) && !(lastSeg === 'bridge' && NEEDS_AIM.has(f));
     if (forcedK < forcedSlots.length && y >= forcedSlots[forcedK] && fits(intro)) { forcedK += 1; return intro; }
     const pool = segUnlocked.filter((f) => f !== intro && fits(f));
     if (!pool.length || !rng2.chance(featureP)) return null;
@@ -279,6 +286,7 @@ export function generateLevel(seed = DEFAULT_SEED, level = 1) {
   while (y < p.length - 120) {
     f = y / p.length;
     const seg = gap >= 1 || y > 300 ? pickSegment(y) : null;
+    lastSeg = seg;
     if (seg) {
       y += placers[seg](y + 10) + 10;
       gap += 1;
@@ -455,6 +463,13 @@ export function generateLevel(seed = DEFAULT_SEED, level = 1) {
   }
   coins.sort((a, b) => a.y - b.y);
   powerups.sort((a, b) => a.y - b.y);
+
+  // The ambush hint: at the first squad that isn't near another hint.
+  if (level === AMBUSH_FROM) {
+    const sq = enemies.filter((e) => e.kind === 'squad' && e.y > 250).sort((a, b) => a.y - b.y)
+      .find((e) => hints.every((h) => Math.abs(h.y - e.y) > 140));
+    if (sq) hints.push({ y: sq.y, title: AMBUSH_HINT[0], sub: AMBUSH_HINT[1], shown: false });
+  }
 
   return {
     seed: String(seed),
