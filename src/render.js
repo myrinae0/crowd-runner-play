@@ -45,13 +45,23 @@ export function createRenderer(canvas) {
   let W = 0, H = 0, dpr = 1;
   let ppu = 4, cx = 0, baseY = 0, horizon = 0, topY = 0, nearD = -30;
 
+  // Returns true when the canvas was actually resized (and so cleared).
+  // Setting canvas.width wipes the picture, and mobile Firefox fires many
+  // resize events (toolbar moves), so skip no-op and bogus tiny sizes.
   function resize() {
     const rect = canvas.getBoundingClientRect();
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    W = Math.max(1, rect.width);
-    H = Math.max(1, rect.height);
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
+    const nextDpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (W > 0 && (rect.width < 50 || rect.height < 50)) return false;
+    const nextW = Math.max(1, rect.width);
+    const nextH = Math.max(1, rect.height);
+    const bw = Math.round(nextW * nextDpr);
+    const bh = Math.round(nextH * nextDpr);
+    if (nextW === W && nextH === H && nextDpr === dpr && canvas.width === bw && canvas.height === bh) return false;
+    dpr = nextDpr;
+    W = nextW;
+    H = nextH;
+    canvas.width = bw;
+    canvas.height = bh;
     const trackW = Math.min(W * 0.92, H * 0.6);
     ppu = trackW / 100;
     cx = W / 2;
@@ -61,6 +71,7 @@ export function createRenderer(canvas) {
     horizon = (topY - baseY * sV) / (1 - sV);
     const sB = (H - horizon) / (baseY - horizon);
     nearD = K / sB - K - 4;
+    return true;
   }
 
   function proj(x, d) {

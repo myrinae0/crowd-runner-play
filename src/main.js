@@ -177,14 +177,30 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' || e.code === 'KeyP') { if (mode === 'play') pause(); else if (mode === 'paused') resume(); }
   if ((e.code === 'Enter' || e.code === 'Space') && (mode === 'menu' || mode === 'end')) { e.preventDefault(); startLevel(); }
 });
-window.addEventListener('resize', () => renderer.resize());
+// Redraw straight away after a real resize, so the cleared canvas is never
+// shown as a blank (all-green) frame before the next animation frame.
+let resizeCount = 0;
+function onResize() {
+  if (!renderer.resize()) return;
+  resizeCount += 1;
+  drawNow();
+}
+window.addEventListener('resize', onResize);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+if (window.ResizeObserver) new ResizeObserver(onResize).observe(canvas);
 
 // ---------- loop ----------
 function inputFor(s) {
   return DEMO ? botInput(s) : input.take();
 }
 
+function drawNow() {
+  if (state) renderer.draw(state, fx, { hidden: mode === 'menu', bankedCoins: banked ? save.coins - state.coins : save.coins });
+}
+
 function frame(now) {
+  // Schedule first, so an error in one frame can't stop the game loop.
+  requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
 
@@ -213,8 +229,25 @@ function frame(now) {
     state.events.length = 0;
   }
   fx.update(mode === 'paused' ? 0 : dt);
-  if (state) renderer.draw(state, fx, { hidden: mode === 'menu', bankedCoins: banked ? save.coins - state.coins : save.coins });
-  requestAnimationFrame(frame);
+  drawNow();
+  if (debugEl) debugTick(now);
+}
+
+// ?debug=1: small overlay with fps, canvas size and resize count.
+const debugEl = params.get('debug') === '1' ? document.createElement('div') : null;
+let dbgFrames = 0, dbgSince = performance.now(), dbgMaxGap = 0, dbgPrev = performance.now();
+function debugTick(now) {
+  dbgFrames += 1;
+  dbgMaxGap = Math.max(dbgMaxGap, now - dbgPrev);
+  dbgPrev = now;
+  if (now - dbgSince < 500) return;
+  const fps = Math.round(dbgFrames * 1000 / (now - dbgSince));
+  debugEl.textContent = `fps ${fps} · worst ${Math.round(dbgMaxGap)}ms · resizes ${resizeCount} · ${canvas.width}x${canvas.height} · dpr ${window.devicePixelRatio}`;
+  dbgFrames = 0; dbgSince = now; dbgMaxGap = 0;
+}
+if (debugEl) {
+  debugEl.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:9;font:11px monospace;color:#fff;background:rgba(0,0,0,.6);padding:2px 5px;border-radius:4px;pointer-events:none';
+  document.body.appendChild(debugEl);
 }
 
 // Read-only hook for debugging and automated checks.
