@@ -98,18 +98,21 @@ export function createRenderer(canvas) {
       const a = proj(0, d0), b = proj(0, d1);
       ctx.fillRect(0, b.y, W, a.y - b.y);
     }
-    // rails and track as single quads (no seams)
-    ctx.fillStyle = COLORS.rail;
-    quad(proj(-2.5, nearD), proj(102.5, nearD), proj(102.5, VIEW), proj(-2.5, VIEW));
-    ctx.fillStyle = COLORS.track;
-    quad(proj(0, nearD), proj(100, nearD), proj(100, VIEW), proj(0, VIEW));
-    // darker track bands for a sense of speed
-    ctx.fillStyle = COLORS.trackB;
+    // Rails and track, drawn as one strip per band rather than one tall quad:
+    // mobile Firefox's GPU canvas sometimes dropped the tall quads, leaving
+    // only the darker bands on green grass (the "flicker"). Strips overlap
+    // slightly so there are no seams.
+    const strips = [];
     for (let y = start; y < state.dist + VIEW + band; y += band) {
-      if (Math.floor(y / band) % 2) continue;
       const d0 = Math.max(nearD, y - state.dist);
       const d1 = Math.min(VIEW, y + band - state.dist);
       if (d1 <= d0) continue;
+      strips.push([d0, Math.min(VIEW, d1 + 0.5), Math.floor(y / band) % 2 === 0]);
+    }
+    ctx.fillStyle = COLORS.rail;
+    for (const [d0, d1] of strips) quad(proj(-2.5, d0), proj(102.5, d0), proj(102.5, d1), proj(-2.5, d1));
+    for (const [d0, d1, dark] of strips) {
+      ctx.fillStyle = dark ? COLORS.trackB : COLORS.track;
       quad(proj(0, d0), proj(100, d0), proj(100, d1), proj(0, d1));
     }
     // lane dashes
