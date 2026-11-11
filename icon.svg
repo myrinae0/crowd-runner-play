@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#2f7cf6"/>
+  <path d="M136 512 L206 150 H306 L376 512 Z" fill="#e8edf3"/>
+  <rect x="150" y="96" width="100" height="70" rx="8" fill="#22b0ff" opacity="0.9"/>
+  <rect x="262" y="96" width="100" height="70" rx="8" fill="#ff4a4a" opacity="0.9"/>
+  <text x="200" y="146" font-family="Arial, sans-serif" font-weight="900" font-size="44" fill="#fff" text-anchor="middle">×2</text>
+  <text x="312" y="146" font-family="Arial, sans-serif" font-weight="900" font-size="44" fill="#fff" text-anchor="middle">−3</text>
+  <g fill="#1b4fb0">
+    <circle cx="226" cy="356" r="24"/><circle cx="286" cy="356" r="24"/><circle cx="256" cy="316" r="24"/>
+    <circle cx="196" cy="396" r="24"/><circle cx="256" cy="396" r="24"/><circle cx="316" cy="396" r="24"/>
+  </g>
+  <g fill="#ffd9b8">
+    <circle cx="226" cy="340" r="11"/><circle cx="286" cy="340" r="11"/><circle cx="256" cy="300" r="11"/>
+    <circle cx="196" cy="380" r="11"/><circle cx="256" cy="380" r="11"/><circle cx="316" cy="380" r="11"/>
+  </g>
+</svg>

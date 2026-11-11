@@ -1,0 +1,14 @@
+{
+  "name": "Crowd Runner",
+  "short_name": "Crowd Runner",
+  "description": "Steer a crowd, shoot gates to change their numbers, beat the boss.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#4fae5f",
+  "theme_color": "#2f7cf6",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

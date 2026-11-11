@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#2f7cf6">
+  <meta name="description" content="Crowd Runner: steer a crowd, shoot gates to change their numbers, beat the boss.">
+  <title>Crowd Runner</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+  <div id="game">
+    <canvas id="view" aria-label="Game view"></canvas>
+    <button id="pauseBtn" class="icon-btn hidden" aria-label="Pause">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+
+    <section id="screen-start" class="screen hidden">
+      <div class="card">
+        <h1 class="logo">CROWD<br><span>RUNNER</span></h1>
+        <p class="how">Drag to steer. Your crowd fires on its own.<br>
+          <b class="good">Blue</b> gates help, <b class="bad">red</b> gates hurt.
+          Shoot a gate to raise its number, then run through the best one.</p>
+        <button id="start-go" class="big">Play level <span class="lvl-num">1</span></button>
+        <div class="shop"></div>
+        <div class="row-btns">
+          <button class="sound-toggle ghost" aria-pressed="false">Sound: off</button>
+        </div>
+        <p class="keys">Desktop: arrow keys / A-D or mouse drag. P pauses.</p>
+      </div>
+    </section>
+
+    <section id="screen-pause" class="screen hidden">
+      <div class="card">
+        <h2>Paused</h2>
+        <button id="pause-resume" class="big">Resume</button>
+        <div class="row-btns">
+          <button class="sound-toggle ghost" aria-pressed="false">Sound: off</button>
+          <button id="pause-quit" class="ghost">Quit to menu</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-end" class="screen hidden">
+      <div class="card">
+        <h2 id="end-title">Level clear!</h2>
+        <div id="end-stats" class="stats"></div>
+        <button id="end-go" class="big">Next level</button>
+        <div class="shop"></div>
+        <div class="row-btns">
+          <button id="end-menu" class="ghost">Menu</button>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
