@@ -167,6 +167,8 @@ export function createFx() {
           if (e.whirl) text('WHIRLWIND!', e.x, e.y + 6, '#cdeefc', 22, 0.7);
           else if (e.lunge && e.hits) text('LUNGE!', e.x, e.y + 6, '#cdeefc', 20, 0.6);
           break;
+        case 'whoosh':
+          break; // an empty swing: the arc (render) and a soft sound only
         case 'shieldBlock':
           burst(e.x, e.y, e.arrow ? 6 : 10, '#c0dcff', 18, 0.9);
           if (e.arrow) text('BLOCK', e.x, e.y + 2, '#c0dcff', 18, 0.6);

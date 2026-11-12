@@ -214,6 +214,11 @@ export const RECIPES = {
       { w: 'sawtooth', f: [1100, 380], dur: 0.08, v: 0.045, filt: { t: 'lowpass', f: 3000 } },
     ],
   },
+  // A swing that hits nothing (melee swings on a steady rhythm): just the air
+  // swoosh, quieter and softer, with no blade edge, so constant swinging
+  // stays in the background.
+  whoosh: { prio: 0, gap: 150, jit: 0.08, layers: [{ w: 'noise', dur: 0.11, v: 0.06, a: 0.02, filt: { t: 'bandpass', f: [600, 2600], q: 1.2 } }] },
+  whooshWhirl: { prio: 0, gap: 200, jit: 0.05, layers: [{ w: 'noise', dur: 0.24, v: 0.07, a: 0.03, filt: { t: 'bandpass', f: [450, 2200], q: 1.1 } }] },
   // Whirlwind: a longer swoosh that rises and falls with a spinning wobble.
   whirl: {
     prio: 2, gap: 150, layers: [
@@ -330,6 +335,7 @@ export function soundFor(e) {
     case 'weaponSwitch': return 'weaponSwitch';
     case 'weaponReady': return 'weaponReady';
     case 'slash': return e.whirl ? 'whirl' : 'slash';
+    case 'whoosh': return e.whirl ? 'whooshWhirl' : 'whoosh';
     case 'shieldBlock': return 'shieldBlock';
     case 'bash': return 'bash';
     case 'reflect': return 'reflect';

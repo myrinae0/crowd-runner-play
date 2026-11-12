@@ -26,11 +26,11 @@ export const UPGRADES = {
   reflect: { name: 'Reflect', tab: 'shield', base: 45, growth: 1.75, max: 3, info: 'Blocked arrows fly back at the tower' },
   rally: { name: 'Rally', tab: 'shield', base: 60, growth: 1.8, max: 4, info: 'Some blocked enemies join you' },
   fortress: { name: 'Fortress', tab: 'shield', base: 50, growth: 1.8, max: 3, info: 'Squeeze: immune to saws and arrows' },
-  swing: { name: 'Swing speed', tab: 'melee', base: 35, growth: 1.6, max: 5, info: 'Slash more often' },
+  swing: { name: 'Swing speed', tab: 'melee', base: 35, growth: 1.6, max: 5, info: 'Swing more often' },
   arc: { name: 'Arc width', tab: 'melee', base: 35, growth: 1.65, max: 4, info: 'Wider, longer slashes' },
-  blood: { name: 'Bloodlust', tab: 'melee', base: 45, growth: 1.75, max: 4, info: 'Kills speed up the next slash' },
+  blood: { name: 'Bloodlust', tab: 'melee', base: 45, growth: 1.75, max: 4, info: 'Kills speed up your swings' },
   recruit: { name: 'Recruit', tab: 'melee', base: 60, growth: 1.8, max: 4, info: 'Some slashed enemies join you' },
-  whirl: { name: 'Whirlwind', tab: 'melee', base: 70, growth: 1.9, max: 3, info: 'Some slashes spin a full circle' },
+  whirl: { name: 'Whirlwind', tab: 'melee', base: 70, growth: 1.9, max: 3, info: 'Some swings spin a full circle' },
   slayer: { name: 'Giant slayer', tab: 'melee', base: 40, growth: 1.7, max: 5, info: 'Big damage to giants, walls, boss' },
 };
 export const UPGRADE_TABS = ['general', 'rifle', 'shield', 'melee'];

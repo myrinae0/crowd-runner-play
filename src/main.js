@@ -227,11 +227,11 @@ const SHOP_FMT = {
   reflect: (s, w) => (w.reflect ? `${w.reflect} dmg back` : 'off'),
   rally: (s, w) => (w.rally ? `${pct(w.rally)} join` : 'off'),
   fortress: (s, w) => (w.fortress ? `${w.fortressT.toFixed(1)} s, every ${w.fortressCd} s` : 'off'),
-  swing: (s, w) => `${(1 / w.meleeCd).toFixed(2)} slashes/s`,
+  swing: (s, w) => `${(1 / w.meleeCd).toFixed(2)} swings/s`,
   arc: (s, w) => `${Math.round((w.arcHalf * 360) / Math.PI)}° wide, reach ${w.reach}`,
   blood: (s, w) => (w.blood ? `+${pct(w.blood)} speed per kill` : 'off'),
   recruit: (s, w) => (w.recruit ? `${pct(w.recruit)} join` : 'off'),
-  whirl: (s, w) => (w.whirlEvery ? `every ${w.whirlEvery}${w.whirlEvery === 2 ? 'nd' : w.whirlEvery === 3 ? 'rd' : 'th'} slash` : 'off'),
+  whirl: (s, w) => (w.whirlEvery ? `every ${w.whirlEvery}${w.whirlEvery === 2 ? 'nd' : w.whirlEvery === 3 ? 'rd' : 'th'} swing` : 'off'),
   slayer: (s, w) => `x${w.bigHit.toFixed(1)} giants/walls, x${w.slayer.toFixed(1)} boss`,
 };
 let shopTab = UPGRADE_TABS.includes(params.get('shop')) ? params.get('shop') : 'general';

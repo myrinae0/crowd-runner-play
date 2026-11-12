@@ -34,7 +34,7 @@ import {
 import { statsFromUpgrades } from './save.js';
 import { hashSeed } from './rng.js';
 import {
-  WEAPONS, WEAPON_UNLOCK, WEAPON_HINTS, WT, weaponStats, weaponUnlocked, meleeDamage, inArc, rectInArc,
+  WEAPONS, WEAPON_UNLOCK, WEAPON_HINTS, WT, weaponStats, weaponUnlocked, meleeDamage, bashDamage, inArc, rectInArc,
 } from './weapons.js';
 import { MAX_CROWD } from './config.js';
 import { WARBAND_SHARE } from './level.js';
@@ -79,10 +79,11 @@ export function createRun(levelDef, upgrades = {}) {
     ws, // weapon numbers from the upgrades (src/weapons.js)
     // Weapon mode. cur is the selected weapon; it is armed once armT reaches 0
     // (nothing fires until then). first: the first move after a switch is
-    // stronger. boost: Quick draw's boost after arming. swing*/blood*: melee.
+    // stronger. boost: Quick draw's boost after arming. readyT: when the
+    // current weapon was armed. swing*/blood*: melee.
     // bashCd: shield bash. fortT/fortCd: Fortress. lastStand: still unused.
     weapon: {
-      cur: 'rifle', armT: 0, since: -99, first: false, boost: 0, swingCd: 0, swingN: 0, blood: 0, bloodT: 0,
+      cur: 'rifle', armT: 0, since: -99, readyT: -99, first: false, boost: 0, swingCd: 0, swingN: 0, blood: 0, bloodT: 0,
       slash: null, bashCd: 0, fortT: 0, fortCd: 0, lastStand: ws.lastStand > 0, tuneAcc: 0,
     },
     fireCd: 0,
@@ -679,6 +680,7 @@ function updateWeapon(s, want, squeezeOn) {
     w.armT = Math.max(0, w.armT - DT);
     if (w.armT === 0) {
       w.first = true; // the first move after a switch is stronger
+      w.readyT = s.t;
       w.boost = ws.boostTime;
       w.swingCd = 0;
       emit(s, { type: 'weaponReady', w: w.cur, boost: ws.boostTime > 0 });
@@ -697,21 +699,30 @@ function updateWeapon(s, want, squeezeOn) {
   }
 }
 
-// Melee: a slash when it is ready and something is in reach. It hits every
-// enemy in the arc (and the boss) for meleeDamage(crowd).
+// Melee: while melee is armed the crowd swings on a steady rhythm (one swing
+// per cooldown), whether or not anything is in reach. A swing hits every
+// enemy in the arc (and the boss) for meleeDamage(crowd); one that hits
+// nothing is just a whoosh. The lunge (double reach) after a switch is held
+// for the first swing with a target in reach, or LUNGE_HOLD s after arming.
 const MELEE_SLACK = 8;
+export const LUNGE_HOLD = 3;
 function slashHits(s, e, r, reach, half, full) {
   if (e.x !== undefined) return inArc(s.crowd.x, s.dist, r, reach, half, full, e.x, e.y, enemyRadius(e));
   return rectInArc(s.crowd.x, s.dist, r, reach, half, full, e.x0, e.x1, e.y, WALL_HALF);
 }
+// Seconds to the next swing: Swing speed, Bloodlust stacks, Quick draw boost.
+const swingCdOf = (w, ws) => (ws.meleeCd / (1 + ws.blood * w.blood)) * (w.boost > 0 ? WT.boostSwing : 1);
 function updateMelee(s, r) {
   const w = s.weapon, ws = s.ws, c = s.crowd;
   if (w.bloodT > 0) { w.bloodT -= DT; if (w.bloodT <= 0) w.blood = 0; }
-  if (w.swingCd > 0) { w.swingCd -= DT; return; }
+  w.swingCd -= DT;
+  if (w.swingCd > 1e-9) return; // exactly one swing per cooldown
+  if (w.first && s.t - w.readyT >= LUNGE_HOLD) w.first = false; // the held lunge lapses
   const whirl = ws.whirlEvery > 0 && (w.swingN + 1) % ws.whirlEvery === 0;
-  const reach = ws.reach * (w.first ? 2 : 1); // first slash after a switch lunges
+  const reach = ws.reach * (w.first ? 2 : 1);
   const half = ws.arcHalf;
   const far = r + reach + MELEE_SLACK + 6;
+  // One pass: is anything in reach? (An empty swing stops here.)
   let any = false;
   for (const e of s.enemies) {
     if (!e.alive || Math.abs(e.y - s.dist) > far) continue;
@@ -719,7 +730,15 @@ function updateMelee(s, r) {
   }
   const b = s.boss;
   const bossIn = b.alive && b.y - b.r - s.dist <= r + reach;
-  if (!any && !bossIn) return; // stays ready
+  if (!any && !bossIn) {
+    // Empty swing: the arc and a light whoosh; no damage, no Bloodlust change,
+    // and the lunge (if any) stays held. It still counts toward Whirlwind.
+    w.swingCd = swingCdOf(w, ws);
+    w.swingN += 1;
+    w.slash = { t: s.t, whirl, reach: ws.reach, half, lunge: false, x: c.x };
+    emit(s, { type: 'whoosh', x: c.x, y: s.dist + r, whirl });
+    return;
+  }
   const dmg = meleeDamage(c.count);
   let kills = 0, units = 0, hits = 0;
   // (s.enemies.length is read each time: splitter halves this slash makes are hit too)
@@ -740,7 +759,7 @@ function updateMelee(s, r) {
   }
   if (ws.recruit > 0) addCrowd(s, Math.floor(units * ws.recruit), 'recruit', c.x, s.dist + r);
   if (kills > 0) { w.blood = Math.min(WT.bloodMax, w.blood + kills); w.bloodT = WT.bloodReset; } else w.blood = 0;
-  w.swingCd = (ws.meleeCd / (1 + ws.blood * w.blood)) * (w.boost > 0 ? WT.boostSwing : 1);
+  w.swingCd = swingCdOf(w, ws);
   w.swingN += 1;
   w.slash = { t: s.t, whirl, reach, half, lunge: w.first, x: c.x };
   emit(s, { type: 'slash', x: c.x, y: s.dist + r, whirl, lunge: w.first, hits });
@@ -763,7 +782,7 @@ function updateBash(s, r) {
   if (!best) return;
   best.y += WT.bashPush;
   best.stun = ws.bashStun;
-  killEnemyUnits(s, best, Math.round(meleeDamage(c.count) * (0.15 + 0.1 * ws.bash)));
+  killEnemyUnits(s, best, bashDamage(c.count, ws.bash));
   w.bashCd = ws.bashEvery;
   emit(s, { type: 'bash', x: best.x, y: best.y });
 }

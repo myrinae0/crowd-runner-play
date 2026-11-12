@@ -7,14 +7,17 @@
 //   shield  fires at SHIELD_FIRE of the rifle's rate. Head-on clashes and
 //           ambushes cost `clash` (about half) of what they would; blocks
 //           about half the arrows; the boss bites less.
-//   melee   no bullets. Slashes an arc just ahead of the crowd about once a
-//           second when something is in reach, for a lot of damage. Can't
-//           touch gates or anything out of reach.
+//   melee   no bullets. While armed, the crowd swings an arc just ahead of
+//           it twice a second, on a steady rhythm, whether or not anything
+//           is in reach (an empty swing is just a whoosh). Hits everything in
+//           the arc; heavy blows vs giants and walls. Can't touch gates or
+//           anything out of reach.
 //
 // Switching takes `switchTime` seconds; nothing fires (and the shield doesn't
 // block) until the new weapon is armed. The first move after a switch is
 // stronger: the rifle's first volley does double damage, the shield's first
-// clash costs nothing, and melee's first slash lunges twice as far.
+// clash costs nothing, and melee's first swing with a target in (double)
+// reach lunges twice as far (held up to 3 s after arming).
 
 export const WEAPONS = ['rifle', 'shield', 'melee'];
 export const WEAPON_UNLOCK = { rifle: 1, shield: 3, melee: 5 };
@@ -40,17 +43,18 @@ export const WT = {
   arrowBlock: 0.5,     // share of arrow hits the shield stops
   bossGuard: 0.6,      // boss bites and attacks cost this much behind a shield
   bashEvery: 2.6, bashEveryStep: 0.3, bashPush: 9, bashStun: 0.8, bashStunStep: 0.25, bashDmg: 4, bashDmgStep: 5,
+  bashBase: 6, bashK: 7, // Bash knocks out (0.15 + 0.1 * level) x (base + k * sqrt(crowd))
   reflectDmg: 12,      // Reflect: tower damage per level for each blocked arrow
   rallyStep: 0.07,     // Rally: share of the blocked enemies that join, per level
   fortressT: 1.2, fortressTStep: 0.4, fortressCd: 9, fortressCdStep: 1,
-  meleeCd: 1.0,        // seconds between slashes
+  meleeCd: 0.5,        // seconds between swings (a steady rhythm while melee is armed)
   swingStep: 0.14,     // Swing speed: +14% slashes per level
-  reach: 12,           // slash reach beyond the crowd's edge (world units)
+  reach: 18,           // slash reach beyond the crowd's edge (world units)
   reachStep: 1.5,
   arcHalf: 55,         // half-angle of the slash (degrees)
   arcStep: 9,
-  meleeBase: 6, meleeK: 7, // slash damage = base + k * sqrt(crowd)
-  meleeBig: 2,         // slashes do double damage to giants and walls (heavy blows)
+  meleeBase: 5, meleeK: 5.5, // slash damage = base + k * sqrt(crowd)
+  meleeBig: 3,         // slashes do triple damage to giants and walls (heavy blows)
   meleeCap: 4000,
   bloodStep: 0.12,     // Bloodlust: +12% swing speed per stacked kill per level...
   bloodMax: 5,         // ...up to this many stacks
@@ -101,6 +105,12 @@ export function weaponStats(u = {}) {
 // Slash damage for a crowd of `count` (applied to every target in the arc).
 export function meleeDamage(count) {
   return Math.round(WT.meleeBase + WT.meleeK * Math.sqrt(Math.min(Math.max(count, 0), WT.meleeCap)));
+}
+
+// Soldiers a shield Bash knocks out (Bash level `lvl`, crowd of `count`).
+export function bashDamage(count, lvl) {
+  const n = Math.min(Math.max(count, 0), WT.meleeCap);
+  return Math.round((WT.bashBase + WT.bashK * Math.sqrt(n)) * (0.15 + 0.1 * lvl));
 }
 
 // Is a round target (centre ex, ey, radius er) inside a slash from a crowd at
