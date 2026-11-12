@@ -112,6 +112,7 @@ function prepareNext() {
   idle(() => {
     levelDef();
     if (!nextRun || nextRun.key !== runKey()) nextRun = { key: runKey(), run: createRun(levelDef(), DEMO ? demoUpgrades(save.level) : save.upgrades) };
+    renderer.prepare(nextRun.run);
   });
 }
 

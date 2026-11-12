@@ -17,6 +17,7 @@ import { pickScale, makeView, VIEW, FAR, HUD_H } from './pixel/view.js';
 import { buildSky, renderFloor } from './pixel/floor.js';
 import { bandFor, intScale, pickSize } from './pixel/atlas.js';
 import { OUT } from './pixel/palette.js';
+import { buildScenery, propFrame, clsFor, lowerBound, LANDMARKS, LM_SIZES, LM_FAR, hazeFor, SHADOW } from './pixel/scenery.js';
 
 export const COLORS = {
   crowd: '#2f7cf6', enemy: '#e2453c', bullet: '#ffd23f', coin: '#ffc934', text: '#ffffff', ink: '#14202e',
@@ -37,7 +38,9 @@ const SQUAD_PACK = packOffsets(80, 1.2);
 
 const ITEM_POOL = [];
 const ITEMS = [];
-const SCENERY_POOL = [];
+const PROP_CAP = 110; // most props drawn in one frame (nearest first; a safety net)
+const NEAR_ALL = 240; // beyond this, only the big "far" props are drawn
+const PATCH_LIST = [];
 const farFirst = (a, b) => b[0] - a[0];
 export const POWER_COLORS = {
   rapid: ['#ff9a1f', '#a85a00'], spread: ['#a35cff', '#5a22a8'], rocket: ['#ef4b3a', '#8a1c12'],
@@ -52,12 +55,6 @@ const GATE_COLORS = {
 const BOSS_SIZES = [12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60];
 const STRIPS = 8;
 
-const hash = (a, b) => {
-  let h = (a * 374761393 + b * 668265263) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-};
-
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   const lo = document.createElement('canvas');
@@ -68,6 +65,20 @@ export function createRenderer(canvas) {
   let ox = 0; // device-pixel x of art column 0 (the buffer is centred; may be < 0)
   let sx = 0, sy = 0; // this frame's screen shake (art px)
   let assetsReady = false;
+  let skyStyle = '';
+  // Scenery layouts by level (pure, deterministic): the current and the next.
+  const scenCache = new Map();
+  function sceneryFor(state) {
+    const key = `${state.level}|${state.seed}|${state.boss.y}`;
+    let sc = scenCache.get(key);
+    if (!sc) {
+      sc = buildScenery({ level: state.level, segments: state.segments, bossY: state.boss.y });
+      scenCache.set(key, sc);
+      if (scenCache.size > 3) scenCache.delete(scenCache.keys().next().value);
+    }
+    return sc;
+  }
+  let scen = null;
   const ready = gfx.ready.then(() => { assetsReady = true; });
 
   // Returns true when the canvas was actually resized (and so cleared).
@@ -95,7 +106,7 @@ export function createRenderer(canvas) {
     ctx.imageSmoothingEnabled = false;
     img = g.createImageData(v.W, v.H);
     buf = new Uint32Array(img.data.buffer);
-    sky = buildSky(v.W, v.hz);
+    skyStyle = '';
     return true;
   }
 
@@ -171,6 +182,7 @@ export function createRenderer(canvas) {
   // ---- floor ----------------------------------------------------------------
   const FLOOR = { dist: 0, t: 0, bridges: [], forks: [], tints: [], rings: [] };
   function drawGround(state) {
+    if (skyStyle !== scen.theme.sky) { sky = buildSky(v.W, v.hz, scen.theme.sky); skyStyle = scen.theme.sky; }
     buf.set(sky);
     FLOOR.dist = state.dist;
     FLOOR.t = state.t;
@@ -185,62 +197,79 @@ export function createRenderer(canvas) {
       else if (s.kind === 'fork') FLOOR.forks.push(s);
     }
     feat.floorMarks(state, FLOOR);
-    renderFloor(buf, v, gfx.floor, FLOOR);
+    // Flat patches in view (sorted by y0; none is longer than 40 units).
+    PATCH_LIST.length = 0;
+    const pts = scen.patches, pt = gfx.patches;
+    for (let i = lowerBound(pts, state.dist + v.nearD - 40, 'y0'); i < pts.length && pts[i].y0 < far; i++) {
+      const p = pts[i];
+      if (p.y1 < state.dist + v.nearD) continue;
+      // Off the side of the screen even at its far edge (where it's widest in view)?
+      const sF = v.K / (v.K + Math.max(0, p.y1 - state.dist));
+      if (v.cx + (p.x1 - 50) * v.ppu * sF < 0 || v.cx + (p.x0 - 50) * v.ppu * sF > v.W) continue;
+      if (!p.tex) p.tex = pt[p.kind][p.v];
+      PATCH_LIST.push(p);
+    }
+    FLOOR.patches = PATCH_LIST;
+    renderFloor(buf, v, gfx.floorFor(scen.theme.name), FLOOR);
     g.putImageData(img, 0, 0);
   }
 
-  // ---- scenery along both sides (beyond the track) ---------------------------
-  const SP = 13;
+  // ---- scenery: props beside the road and far-off landmarks ----------------------
+  // The layout (src/pixel/scenery.js) keeps every prop clear of the road; here
+  // they are culled to the screen and capped. Beyond 240 units only the big
+  // ones ("far") are drawn.
   function addScenery(state, add) {
-    const i0 = Math.floor((state.dist + v.nearD - 12) / SP), i1 = Math.floor((state.dist + FAR) / SP);
+    const props = scen.props;
+    const far = state.dist + FAR, K = v.K, kx = v.ppu, cx = v.cx, W2 = v.W;
     let n = 0;
-    for (let i = i0; i <= i1; i++) {
-      for (let side = 0; side < 2; side++) {
-        const h = hash(i, side);
-        if (h < 0.22) continue;
-        const y = i * SP + h * 7;
-        const d = y - state.dist;
-        if (d > 260 && (i & 1)) continue;
-        if (d < v.nearD - 12 || d > FAR) continue;
-        if (FLOOR.bridges.some((b) => y > b.y0 - 3 && y < b.y1 + 1)) continue; // no trees in the river
-        const h2 = hash(i + 7, side + 3);
-        const o = SCENERY_POOL[n] || (SCENERY_POOL[n] = { x: 0, kind: 0, alt: 0 });
-        n += 1;
-        o.x = side ? 106 + h2 * 24 : -6 - h2 * 24;
-        o.kind = h < 0.4 ? 0 : h < 0.62 ? 1 : h < 0.8 ? 2 : h < 0.93 ? 3 : 4; // tall, pine, autumn, bush, rock
-        o.alt = h2 < 0.5 ? 0 : 1;
-        add(y, 6, o);
-      }
+    for (let i = lowerBound(props, state.dist + v.nearD - 12); i < props.length; i++) {
+      const p = props[i];
+      if (p.y > far) break;
+      const d = p.y - state.dist;
+      if (d > NEAR_ALL && !p.far) continue;
+      const s = K / (K + d);
+      const f = propFrame(p.kind, p.alt, s);
+      if (!f) continue;
+      const X = cx + (p.x - 50) * kx * s, hw = f.w / 2;
+      if (X + hw < 0 || X - hw > W2) continue;
+      // Last guard: never over the road (the layout already keeps clear).
+      if (p.x < 50 ? X + hw > cx - 50 * kx * s - 1 : X - hw < cx + 50 * kx * s + 1) continue;
+      // Per-frame scratch on the layout object, read back by drawProp.
+      p.sx = X; p.sy = v.hz + v.span * s; p.f = f; p.c = clsFor(s);
+      add(p.y, 6, p);
+      if (++n >= PROP_CAP) break;
+    }
+    for (const lm of scen.landmarks) {
+      const d = lm.y - state.dist;
+      if (d > v.nearD && d < LM_FAR) add(lm.y, 7, lm);
     }
   }
-  function drawScenery(state, o, y) {
-    const d = y - state.dist;
-    const q = proj(o.x, d);
-    if (q.x < -20 || q.x > v.W + 20) return;
-    const s = q.s;
-    const cls = s >= 0.78 ? 0 : s >= 0.48 ? 1 : s >= 0.25 ? 2 : 3;
-    const X = q.x, Y = q.y;
-    if (cls < 2 && o.kind < 3) gfx.blit(g, gfx.ellipse(cls ? 8 : 12, 3, 'rgba(43,29,43,0.3)'), X, Y + 1, true);
-    switch (o.kind) {
-      case 0:
-        if (cls === 0) gfx.kspr(g, o.alt ? 'treeTallOrange' : 'treeTallGreen', X, Y);
-        else if (cls === 1) gfx.kspr(g, o.alt ? 'treeOrange' : 'treeGreen', X, Y);
-        else gfx.spr(g, cls === 2 ? (o.alt ? 'autumnM' : 'pineM') : (o.alt ? 'autumnS' : 'pineS'), X, Y);
-        break;
-      case 1:
-      case 2: {
-        const autumn = o.kind === 2;
-        if (cls === 0) gfx.kspr(g, autumn ? 'treeOrange' : 'treeGreen', X, Y);
-        else gfx.spr(g, cls === 1 ? (autumn ? 'autumnM' : 'pineM') : (autumn ? 'autumnS' : 'pineS'), X, Y);
-        break;
-      }
-      case 3:
-        if (cls === 0 && o.alt) gfx.kspr(g, 'mushrooms', X, Y + 3);
-        else gfx.spr(g, cls < 2 ? 'bushM' : 'bushS', X, Y);
-        break;
-      default:
-        gfx.spr(g, 'rockS', X, Y);
+  // True when a sprite `w` px wide centred at screen x `X` (world x `wx`, depth
+  // d) would reach over the road: a last guard, the layout already avoids it.
+  function onRoad(wx, X, w, d) {
+    return wx < 50 ? X + w / 2 > proj(0, d).x - 1 : X - w / 2 < proj(100, d).x + 1;
+  }
+  const SHADOWS = new Map();
+  function drawProp(p) {
+    const f = p.f, X = p.sx, Y = p.sy;
+    if (p.c < 2 && SHADOW.has(p.kind)) {
+      const sw = Math.max(6, Math.round(f.w * 0.7));
+      let sh = SHADOWS.get(sw);
+      if (!sh) { sh = gfx.ellipse(sw, 3, 'rgba(43,29,43,0.3)'); SHADOWS.set(sw, sh); }
+      g.drawImage(sh, R(X - sw / 2), R(Y + 1 - 1.5));
     }
+    if (f.src === 'atlas') gfx.spr(g, f.n, X, Y);
+    else if (f.src === 'kenney') gfx.kspr(g, f.n, X, f.n === 'mushrooms' ? Y + 3 : Y);
+    else gfx.cspr(g, f.n, X, Y);
+  }
+  function drawLandmark(state, lm) {
+    const d = lm.y - state.dist;
+    const q = proj(lm.x, d);
+    const h = pickSize(LM_SIZES, LANDMARKS[lm.kind].height * v.ppu * q.s);
+    const frame = lm.kind === 'windmill' ? Math.floor(state.t * 2.5) & 3 : lm.kind === 'tower' && scen.theme.name === 'village' ? 1 : 0;
+    const c = gfx.landmark(lm.kind, h, frame, hazeFor(d));
+    if (q.x + c.width / 2 < 0 || q.x - c.width / 2 > v.W || onRoad(lm.x, q.x, c.width, d)) return;
+    gfx.blit(g, c, q.x, q.y + 1);
   }
 
   // ---- gates ------------------------------------------------------------------
@@ -559,6 +588,7 @@ export function createRenderer(canvas) {
       blitToScreen();
       return;
     }
+    scen = sceneryFor(state);
     drawGround(state);
 
     // Painter's order: far to near. Only what's in view, in reused slots, so a
@@ -598,7 +628,8 @@ export function createRenderer(canvas) {
       else if (k === 3) feat.drawHazard(state, o);
       else if (k === 4) feat.drawForkStart(state, o);
       else if (k === 5) feat.drawCoin(state, o);
-      else drawScenery(state, o, y);
+      else if (k === 6) drawProp(o);
+      else drawLandmark(state, o);
     }
     if (!bossDrawn) drawBoss(state);
     feat.drawTelegraphMarks(state);
@@ -618,9 +649,16 @@ export function createRenderer(canvas) {
     blitToScreen();
   }
 
+  // Builds the scenery layout and the themed floor for a run ahead of time
+  // (between levels), so its first frame doesn't pay for them.
+  function prepare(state) {
+    const sc = sceneryFor(state);
+    if (assetsReady) gfx.floorFor(sc.theme.name);
+  }
+
   resize();
   return {
-    resize, draw, hitPad, ready,
+    resize, draw, hitPad, ready, prepare,
     // ppu in CSS pixels per world unit (the input module converts drags with it).
     get size() { return { W, H, ppu: v ? (v.ppu * S) / dpr : 4 }; },
   };

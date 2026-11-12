@@ -25,6 +25,11 @@ function shade(p, k) {
   return (0xff000000 | (Math.min(255, b * k) << 16) | (Math.min(255, g * k) << 8) | Math.min(255, r * k)) >>> 0;
 }
 
+function tintPx(p, t) {
+  const r = p & 255, g = (p >>> 8) & 255, b = (p >>> 16) & 255;
+  return (0xff000000 | (Math.min(255, Math.round(b * t[2])) << 16) | (Math.min(255, Math.round(g * t[1])) << 8) | Math.min(255, Math.round(r * t[0]))) >>> 0;
+}
+
 // Box-filtered half-size copy (wrapping), for distant rows (less shimmer).
 function halve(t) {
   const w = t.w >> 1, h = t.h >> 1;
@@ -41,7 +46,8 @@ function halve(t) {
 }
 
 // tiles: { grass: [3 x Uint32Array(256)], roadL, road, roadR, water } (16x16 each).
-export function buildFloorTextures(tiles) {
+// tint: optional RGB multipliers for the grass (the level's theme).
+export function buildFloorTextures(tiles, tint = null) {
   const data = new Uint32Array(TW * TV);
   const dirtDark = rgba32('#cf8254'), dirtLight = rgba32('#f3bf86');
   for (let r = 0; r < TV / 16; r++) {
@@ -55,6 +61,7 @@ export function buildFloorTextures(tiles) {
       const grass = k < 6 || k > 15;
       for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
         let p = tile[y * 16 + x];
+        if (grass && tint) p = tintPx(p, tint);
         if (grass && dark) p = shade(p, 0.92);
         if (!grass && k > 6 && k < 15) {
           const h = hash(k * 16 + x, r * 16 + y);
@@ -81,8 +88,16 @@ export function buildFloorTextures(tiles) {
   return { mips, water: tiles.water, hedge };
 }
 
+// Hill colours (far, near) per theme sky; forest adds a tree line.
+const SKY_HILLS = {
+  farm: ['#6aa860', '#5a9a5c'],
+  forest: ['#4f8f5e', '#2f6e3c'],
+  village: ['#5d9e6a', '#4a8a5a'],
+  autumn: ['#b0a35a', '#c27a3a'],
+};
+
 // Sky, hills and clouds for a buffer W wide, rows 0..hz-1.
-export function buildSky(W, hz) {
+export function buildSky(W, hz, style = 'village') {
   const out = new Uint32Array(W * hz);
   const bands = ['#3a8fd9', '#4a9fe3', '#5aafeb', '#6dbff2', '#86cff6', '#a3defa'].map(rgba32);
   for (let y = 0; y < hz; y++) {
@@ -97,17 +112,24 @@ export function buildSky(W, hz) {
     const x = Math.round(fx * W), y = Math.round(fy * hz);
     rect(x, y, 22, 5, white); rect(x + 4, y - 4, 10, 4, white); rect(x + 12, y - 6, 6, 3, white); rect(x, y + 4, 22, 1, shadow);
   }
-  const h1c = rgba32('#5d9e6a'), h2c = rgba32('#4a8a5a');
+  const [c1, c2] = SKY_HILLS[style] || SKY_HILLS.village;
+  const h1c = rgba32(c1), h2c = rgba32(c2);
   for (let x = 0; x < W; x++) {
     const h1 = 10 + Math.round(6 * Math.sin(x / 17) + 4 * Math.sin(x / 7 + 2));
     rect(x, hz - h1, 1, h1, h1c);
-    const h2 = 4 + Math.round(3 * Math.sin(x / 11 + 1));
+    let h2 = 4 + Math.round(3 * Math.sin(x / 11 + 1));
+    // Forest: a saw-tooth line of pine tops along the near hills.
+    if (style === 'forest') h2 += 5 - Math.abs(((x + 3) % 7) - 3);
+    // Village: a few rooftops in the distance.
+    if (style === 'village' && (x % 37) > 30) h2 += (x % 37) === 31 || (x % 37) === 36 ? 3 : 4;
     rect(x, hz - h2, 1, h2, h2c);
   }
   return out;
 }
 
 // Renders floor rows hz..H-1 into `buf` (W wide).
+// f.patches (optional): [{y0,y1,x0,x1,tex:{w,h,mips}}] flat patches in the
+// fields (ponds, dirt, crops...), world rects; texture row 0 is the far edge.
 // f: { dist, t, bridges: [{y0,y1,x0,x1}], forks: [{y0,y1,d0,d1}],
 //      tints: [{y0,y1,x0,x1,c:[r,g,b],a}] (world rects; a 0..1),
 //      rings: [{cx,cy,rx,ry,t,wx0,wx1,c,a}] (screen-space ellipse outlines,
@@ -145,6 +167,26 @@ export function renderFloor(buf, v, tex, f) {
         let ui = u >> 16;
         if (ui < 0 || ui >= tw) ui &= gm;
         buf[i] = data[vrow + ui];
+      }
+      // Flat patches (ponds, dirt, flower beds, crops) on the grass.
+      const patches = f.patches;
+      if (patches) for (let pi = 0; pi < patches.length; pi++) {
+        const p = patches[pi];
+        if (wy < p.y0 || wy >= p.y1) continue;
+        const a = Math.max(0, pxOf(p.x0)), e = Math.min(W, pxOf(p.x1));
+        if (e <= a) continue;
+        const mp = p.tex.mips[Math.min(lvl, p.tex.mips.length - 1)];
+        const sh = p.tex.w / mp.w;
+        const tr = Math.min(mp.h - 1, Math.floor(((p.y1 - wy) * TEX_PER_UNIT) / sh));
+        const pd = mp.data, prow = tr * mp.w, mw1 = mp.w - 1;
+        const pstep = ((du / sh) * 65536) | 0;
+        let pu = ((((xw0 + a * upp - p.x0) * TEX_PER_UNIT) / sh) * 65536) | 0;
+        for (let i = row + a, end = row + e; i < end; i++, pu += pstep) {
+          let ui = pu >> 16;
+          if (ui < 0) ui = 0; else if (ui > mw1) ui = mw1;
+          const c = pd[prow + ui];
+          if (c) buf[i] = c;
+        }
       }
       // Hazard stripes where the road ends at a bridge.
       for (const b of f.bridges) {

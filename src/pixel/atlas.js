@@ -18,6 +18,8 @@ export const SHEETS = {
 };
 
 export const OUTLINE_RGB = [0x3f, 0x26, 0x31];
+// Tiny Town's well (and a few other tiles) use a slightly darker outline.
+export const OUTLINE_RGBS = [OUTLINE_RGB, [0x3d, 0x21, 0x2d]];
 
 const T = 16;
 export function tileRect(sheet, id, wTiles = 1, hTiles = 1) {
@@ -39,7 +41,38 @@ export const KENNEY = {
   sign: tileRect('town', 83),
   flagRed: { ...tileRect('battle', 70), ground: true, allow: 't' },
   flagBlue: { ...tileRect('battle', 52), ground: true, allow: 't' },
+  // Village and grove props (scenery).
+  well: { ...tileRect('town', 92, 1, 2), ground: true, allow: 'lr' }, // roof (92) over the well (104)
+  fence: { ...tileRect('town', 80, 3, 1), ground: true }, // post, rail, post
+  sapling: { ...tileRect('battle', 94), ground: true },
+  saplings: { ...tileRect('battle', 112), ground: true, allow: 'lr' },
 };
+
+// Houses are built from several Tiny Town tiles that are NOT next to each
+// other on the sheet (roof rows, a gable, a wall row with the door), so each
+// one is composed into a single image first and drawn as one rect. Grids are
+// tile ids, top row first.
+export const COMPOSITES = {
+  houseBlue: { sheet: 'town', grid: [[48, 49, 50], [60, 63, 62], [72, 85, 75]], ground: true, allow: 'tlr' },
+  houseBlueChimney: { sheet: 'town', grid: [[48, 51, 50], [60, 63, 62], [72, 85, 75]], ground: true, allow: 'tlr' },
+  houseRed: { sheet: 'town', grid: [[52, 53, 54], [64, 67, 66], [76, 89, 79]], ground: true, allow: 'tlr' },
+  houseRedChimney: { sheet: 'town', grid: [[52, 55, 54], [64, 67, 66], [76, 89, 79]], ground: true, allow: 'tlr' },
+};
+
+// img: { width, rgba } (whole sheet). Returns { w, h, rgba } of the composed object.
+export function composeImage(img, def) {
+  const cols = SHEETS[def.sheet].cols;
+  const h = def.grid.length * T, w = def.grid[0].length * T;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  def.grid.forEach((row, ty) => row.forEach((id, tx) => {
+    const sx = (id % cols) * T, sy = Math.floor(id / cols) * T;
+    for (let y = 0; y < T; y++) {
+      const q = ((sy + y) * img.width + sx) * 4;
+      rgba.set(img.rgba.subarray(q, q + T * 4), ((ty * T + y) * w + tx * T) * 4);
+    }
+  }));
+  return { w, h, rgba };
+}
 
 // Tiles used as repeating floor textures (they are meant to touch their edges).
 export const FLOOR_TILES = {
@@ -93,7 +126,7 @@ export function checkFrame(img, rect, opts = {}) {
       const q = px(x, y);
       if (img.rgba[q + 3] < 16) continue;
       opaque += 1;
-      if (img.rgba[q] !== OUTLINE_RGB[0] || img.rgba[q + 1] !== OUTLINE_RGB[1] || img.rgba[q + 2] !== OUTLINE_RGB[2]) nonOutline += 1;
+      if (!OUTLINE_RGBS.some((o) => img.rgba[q] === o[0] && img.rgba[q + 1] === o[1] && img.rgba[q + 2] === o[2])) nonOutline += 1;
     }
     if (!opaque) continue;
     if (allow.includes(edge) && !nonOutline) continue;

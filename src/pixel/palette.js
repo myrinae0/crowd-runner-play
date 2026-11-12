@@ -18,6 +18,8 @@ export const PAL = {
   y: '#ffd23f', Y: '#e09e12', v: '#fff3a6', c: '#fdbe53', C: '#e38628',
   // whites
   '#': '#ffffff', '+': '#d7e1ee',
+  // scenery: roof red (dark), water, hay, pumpkin, soil
+  R: '#aa2c23', b: '#5ec4f0', B: '#2f8fd6', h: '#e3c27a', H: '#b8913a', p: '#f08a24', P: '#b4561a', d: '#8a5a3c',
   // shadow (drawn semi-transparent)
   '~': 'rgba(43,29,43,0.32)',
 };
