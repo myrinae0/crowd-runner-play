@@ -60,6 +60,8 @@ const fx = createFx();
 const audio = createAudio();
 audio.setMuted(save.muted);
 audio.setMusic(save.music);
+audio.setSfxVolume(save.sfxVol);
+audio.setMusicVolume(save.musicVol);
 // Browsers start audio only from a user gesture: unlock on the first tap or key
 // (pointerup / touchend count as a gesture on phones, pointerdown doesn't).
 for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) {
@@ -240,6 +242,7 @@ function refreshScreens() {
     el.textContent = audio.music ? 'Music: on' : 'Music: off';
     el.setAttribute('aria-pressed', String(audio.music));
   }
+  refreshVolumes();
   const silent = audio.muted && !audio.music;
   $('muteBtn').classList.toggle('off', silent);
   $('muteBtn').setAttribute('aria-pressed', String(silent));
@@ -296,6 +299,51 @@ function toggleAll() {
     const b = beforeMute || { sfx: true, music: true };
     beforeMute = null;
     setSound(b.sfx, b.music);
+  }
+}
+
+// ---------- volume sliders (menu and pause screen) ----------
+// Each slider sits next to its switch. The switch doesn't change the slider
+// value; a slider for a switched-off channel is greyed but still moves.
+const volOf = (ch) => (ch === 'sfx' ? audio.sfxVol : audio.musicVol);
+const volOn = (ch) => (ch === 'sfx' ? !audio.muted : audio.music);
+function refreshVolumes() {
+  for (const el of document.querySelectorAll('.vol')) {
+    const ch = el.dataset.ch;
+    const v = volOf(ch);
+    const on = volOn(ch);
+    if (+el.value !== v) el.value = String(v);
+    el.style.setProperty('--v', String(v / 100));
+    el.classList.toggle('off', !on);
+    el.setAttribute('aria-valuetext', `${v}%${on ? '' : ', switched off'}`);
+    const out = el.parentElement.querySelector('.vol-val');
+    if (out && out.dataset.v !== `${v}`) {
+      out.dataset.v = `${v}`;
+      out.textContent = `${v}%`;
+      pixelize(el.parentElement);
+    }
+  }
+}
+function setVolume(ch, v) {
+  if (ch === 'sfx') { audio.setSfxVolume(v); save.sfxVol = audio.sfxVol; } else { audio.setMusicVolume(v); save.musicVol = audio.musicVol; }
+  audio.unlock(); // from a gesture, so the context may start here
+  refreshVolumes();
+}
+for (const el of document.querySelectorAll('.vol')) {
+  const ch = el.dataset.ch;
+  el.addEventListener('input', () => setVolume(ch, +el.value));
+  // Released (or a key step): save, and let the player hear the new level.
+  el.addEventListener('change', () => {
+    setVolume(ch, +el.value);
+    persist();
+    if (ch === 'sfx') audio.preview();
+  });
+  // Keep slider gestures and keys to the slider: arrow keys would otherwise
+  // steer (and the steering handler's preventDefault would stop the slider),
+  // and Space / Enter would start a run. Escape and P still pause / resume.
+  el.addEventListener('keydown', (e) => { if (e.code !== 'Escape' && e.code !== 'KeyP') e.stopPropagation(); });
+  for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'touchstart', 'touchmove', 'touchend', 'click']) {
+    el.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
   }
 }
 

@@ -21,6 +21,29 @@ export const MUSIC_VOL = 0.5;          // music sits under the effects
 export const MASTER_VOL = 1.0;
 const SILENT = 0.0001;
 
+// Volume sliders (0-100 per channel). 80 is the loudness the game was tuned
+// at; 100 is 1.25x that (the headroom measured before the busiest mix reaches
+// full scale; the compressor still catches anything over). The curve is a
+// smooth cubic through (0, 0), (80, 1) and (100, 1.25): it bends like an
+// audio taper, so the low half stays usable (50 -> 0.51x, about -6 dB;
+// 25 -> 0.15x, about -16 dB; 10 -> 0.03x, about -32 dB). A plain power curve
+// can't hit both 80 -> 1 and 100 -> 1.25 (only a straight line can).
+export const DEFAULT_VOL = 80;
+export const MAX_BOOST = 1.25;
+const CUBE_B = 2.8125;  // gain(x) = B x^2 - C x^3, x = v / 100
+const CUBE_C = 1.5625;
+export function clampVol(v, def = DEFAULT_VOL) {
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+  return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : def;
+}
+export function volumeGain(v) {
+  const x = clampVol(v) / 100;
+  return x <= 0 ? 0 : CUBE_B * x * x - CUBE_C * x * x * x;
+}
+const SLIDE_TAU = 0.03; // slider moves glide over ~0.1 s (no zipper clicks)
+const PREVIEW_GAP_MS = 150;
+const PREVIEW_SOUND = 'gateNeutral';
+
 // Builds the noise buffer and pulse waves once for a context, and plays
 // recipes and music notes into a destination node. Used by the engine and by
 // the offline render check.
@@ -174,6 +197,9 @@ export function createAudio(opts = {}) {
 
   let sfxOn = true;
   let musicOn = true;
+  let sfxVol = DEFAULT_VOL;
+  let musicVol = DEFAULT_VOL;
+  let lastPreview = -Infinity;
   let ctx = null;
   let failed = false;
   let sleeping = false;
@@ -211,7 +237,7 @@ export function createAudio(opts = {}) {
       }
       out.connect(ctx.destination);
       sfxBus = ctx.createGain();
-      sfxBus.gain.value = SFX_VOL;
+      sfxBus.gain.value = sfxGain();
       sfxBus.connect(master);
       musicBus = ctx.createGain();
       musicBus.gain.value = 0;
@@ -225,7 +251,12 @@ export function createAudio(opts = {}) {
     return ctx;
   }
 
-  const anyOn = () => sfxOn || musicOn;
+  // A channel at 0% counts as off: no notes, no nodes, no waking the context.
+  const sfxLive = () => sfxOn && sfxVol > 0;
+  const musicLive = () => musicOn && musicVol > 0;
+  const anyOn = () => sfxLive() || musicLive();
+  const sfxGain = () => SFX_VOL * volumeGain(sfxVol);
+  const musicGain = () => MUSIC_VOL * volumeGain(musicVol);
 
   function resumeCtx() {
     if (ctx && ctx.state === 'suspended' && !sleeping && anyOn()) {
@@ -255,7 +286,7 @@ export function createAudio(opts = {}) {
   // Make the music match the scene and the music switch.
   function applyScene() {
     if (!ctx) return;
-    if (!musicOn || sleeping || scene === 'paused') {
+    if (!musicLive() || sleeping || scene === 'paused') {
       // Keep the song position, so resuming carries on where it stopped.
       seq.pause();
       fadeMusic(0, 0.08);
@@ -276,7 +307,7 @@ export function createAudio(opts = {}) {
       seq.start(song, t);
       songLead = LEADS[song];
     }
-    fadeMusic(MUSIC_VOL, 0.15);
+    fadeMusic(musicGain(), 0.15);
     seq.tick(ctx.currentTime);
     startTimer();
   }
@@ -286,7 +317,7 @@ export function createAudio(opts = {}) {
     for (const e of events) {
       if (e.type === 'bossPhase2' && seq.song === 'boss') seq.setTempo(1.12);
     }
-    if (!sfxOn || sleeping || ctx.state === 'suspended') return;
+    if (!sfxLive() || sleeping || ctx.state === 'suspended') return;
     const t = ctx.currentTime;
     const ms = nowMs();
     let started = 0;
@@ -308,9 +339,38 @@ export function createAudio(opts = {}) {
     }
   }
 
+  // After a switch or slider change: wake or park the context to match.
+  function syncCtx() {
+    if (anyOn()) resumeCtx();
+    applyScene();
+    if (!anyOn()) suspendCtx();
+  }
+
+  // A short blip at the current effects level (for the Sound slider). Rate
+  // limited; silent when effects are off, at 0% or the tab is hidden.
+  function preview() {
+    if (!sfxLive() || sleeping || !ctx || !synth) return false;
+    const ms = nowMs();
+    if (ms - lastPreview < PREVIEW_GAP_MS) return false;
+    lastPreview = ms;
+    const t = ctx.currentTime;
+    const r = RECIPES[PREVIEW_SOUND];
+    const voice = pool.admit(t, recipeDur(r), 3);
+    if (!voice) return false;
+    try {
+      voice.stop = synth.playRecipe(PREVIEW_SOUND, t, sfxBus, 0);
+    } catch {
+      voice.end = t;
+      return false;
+    }
+    return true;
+  }
+
   return {
     get muted() { return !sfxOn; },
     get music() { return musicOn; },
+    get sfxVol() { return sfxVol; },
+    get musicVol() { return musicVol; },
     get scene() { return scene; },
     setMuted(m) {
       sfxOn = !m;
@@ -319,10 +379,30 @@ export function createAudio(opts = {}) {
     },
     setMusic(on) {
       musicOn = !!on;
-      if (anyOn()) resumeCtx();
-      applyScene();
-      if (!anyOn()) suspendCtx();
+      syncCtx();
     },
+    // Slider values, 0-100. The switches above don't change them, so turning
+    // a channel back on brings back its level.
+    setSfxVolume(v) {
+      sfxVol = clampVol(v, sfxVol);
+      if (sfxBus) {
+        const now = ctx.currentTime;
+        sfxBus.gain.cancelScheduledValues(now);
+        sfxBus.gain.setTargetAtTime(sfxGain(), now, SLIDE_TAU);
+      }
+      syncCtx();
+    },
+    setMusicVolume(v) {
+      const was = musicLive();
+      musicVol = clampVol(v, musicVol);
+      if (ctx && was && musicLive() && !sleeping && scene !== 'paused' && seq.playing) {
+        fadeMusic(musicGain(), SLIDE_TAU); // already playing: just glide
+        if (anyOn()) resumeCtx();
+      } else {
+        syncCtx();
+      }
+    },
+    preview,
     // Call from a user gesture: creates or resumes the context.
     unlock() {
       if (!anyOn() || sleeping) return;
@@ -351,6 +431,10 @@ export function createAudio(opts = {}) {
       applyScene();
     },
     play,
-    _debug: { pool, limiter, seq, get ctx() { return ctx; }, get timer() { return timer; } },
+    _debug: {
+      pool, limiter, seq,
+      get ctx() { return ctx; }, get timer() { return timer; },
+      get sfxBus() { return sfxBus; }, get musicBus() { return musicBus; },
+    },
   };
 }

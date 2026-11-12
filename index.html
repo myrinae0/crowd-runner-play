@@ -34,9 +34,17 @@
           your crowd tight for bridges and saws. Packed crowds fire less.</p>
         <button id="start-go" class="big">Play level 1</button>
         <div class="shop"></div>
-        <div class="row-btns">
-          <button class="sound-toggle ghost" aria-pressed="true">Sound: on</button>
-          <button class="music-toggle ghost" aria-pressed="true">Music: on</button>
+        <div class="vol-rows">
+          <div class="vol-row">
+            <button class="sound-toggle ghost" aria-pressed="true">Sound: on</button>
+            <input type="range" class="vol" data-ch="sfx" min="0" max="100" step="1" value="80" aria-label="Sound effects volume" aria-valuetext="80%">
+            <span class="vol-val" aria-hidden="true">80%</span>
+          </div>
+          <div class="vol-row">
+            <button class="music-toggle ghost" aria-pressed="true">Music: on</button>
+            <input type="range" class="vol" data-ch="music" min="0" max="100" step="1" value="80" aria-label="Music volume" aria-valuetext="80%">
+            <span class="vol-val" aria-hidden="true">80%</span>
+          </div>
         </div>
         <p class="keys">Desktop: arrow keys / A-D or mouse drag. Hold Space or Shift to squeeze. P pauses.</p>
       </div>
@@ -46,9 +54,17 @@
       <div class="card">
         <h2>Paused</h2>
         <button id="pause-resume" class="big">Resume</button>
-        <div class="row-btns">
-          <button class="sound-toggle ghost" aria-pressed="true">Sound: on</button>
-          <button class="music-toggle ghost" aria-pressed="true">Music: on</button>
+        <div class="vol-rows">
+          <div class="vol-row">
+            <button class="sound-toggle ghost" aria-pressed="true">Sound: on</button>
+            <input type="range" class="vol" data-ch="sfx" min="0" max="100" step="1" value="80" aria-label="Sound effects volume" aria-valuetext="80%">
+            <span class="vol-val" aria-hidden="true">80%</span>
+          </div>
+          <div class="vol-row">
+            <button class="music-toggle ghost" aria-pressed="true">Music: on</button>
+            <input type="range" class="vol" data-ch="music" min="0" max="100" step="1" value="80" aria-label="Music volume" aria-valuetext="80%">
+            <span class="vol-val" aria-hidden="true">80%</span>
+          </div>
         </div>
         <div class="row-btns">
           <button id="pause-quit" class="ghost">Quit to menu</button>

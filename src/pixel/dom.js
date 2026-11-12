@@ -7,7 +7,7 @@ import { textMask } from './font.js';
 import { raster, ICONS } from './sprites.js';
 import { OUT, rgba } from './palette.js';
 
-const SELECTOR = '.logo span, .logo .l1, h2, .big, .ghost, .stats b, .shop-head > span:first-child, .shop-name, .shop-name small, .buy, .coins';
+const SELECTOR = '.logo span, .logo .l1, h2, .big, .ghost, .stats b, .shop-head > span:first-child, .shop-name, .shop-name small, .buy, .coins, .vol-val';
 
 function cssColor(el) {
   const m = getComputedStyle(el).color.match(/\d+(\.\d+)?/g) || ['255', '255', '255'];

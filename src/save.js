@@ -2,6 +2,10 @@
 
 export const SAVE_KEY = 'crowd-runner-save-v1';
 
+// Volume sliders: 0-100 per channel, 80 is the level the game was tuned at
+// (the same number as DEFAULT_VOL in audio.js, which save.js doesn't import).
+export const DEFAULT_VOL = 80;
+
 export const UPGRADES = {
   crowd: { name: 'Starting crowd', base: 12, growth: 1.42, max: 30 },
   rate: { name: 'Fire rate', base: 18, growth: 1.45, max: 20 },
@@ -11,7 +15,12 @@ export const UPGRADES = {
 export function defaultSave() {
   // Sound effects and music are on for new players. `muted` is the sound
   // effects switch (its name predates the music); `music` is the music switch.
-  return { v: 1, coins: 0, level: 1, best: 1, upgrades: { crowd: 0, rate: 0, dmg: 0 }, muted: false, music: true };
+  // `sfxVol` and `musicVol` are the volume sliders (0-100); the switches don't
+  // change them.
+  return {
+    v: 1, coins: 0, level: 1, best: 1, upgrades: { crowd: 0, rate: 0, dmg: 0 },
+    muted: false, music: true, sfxVol: DEFAULT_VOL, musicVol: DEFAULT_VOL,
+  };
 }
 
 export function statsFromUpgrades(u = {}) {
@@ -58,7 +67,15 @@ export function sanitize(raw) {
       dmg: int(u.dmg, 0, UPGRADES.dmg.max, 0),
     },
     ...soundPrefs(raw, d),
+    sfxVol: vol(raw.sfxVol),
+    musicVol: vol(raw.musicVol),
   };
+}
+
+// A slider value: a whole number 0-100; anything else (missing in saves from
+// before the sliders, junk) is the default.
+export function vol(v) {
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v))) : DEFAULT_VOL;
 }
 
 // A save from before the music existed has no `music` field. The old game
