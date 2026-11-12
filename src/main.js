@@ -27,6 +27,7 @@ import { createRenderer } from './render.js';
 import { createFx } from './fx.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
+import { pixelize, installCssSprites } from './pixel/dom.js';
 import {
   UPGRADES, loadSave, writeSave, buyUpgrade, upgradeCost, statsFromUpgrades, recordRun, defaultSave,
 } from './save.js';
@@ -134,6 +135,9 @@ function warmUp() {
     ghost.buffs.rapid = 1;
     renderer.draw(ghost, fx, { bankedCoins: 0, pad: true });
     fx.clear();
+    // The real level's first frame with its HUD too, so the pixel text it
+    // needs (level, coins, counts, gate labels) is already cached at the start.
+    renderer.draw(state, fx, { bankedCoins: save.coins, pad: state.level >= SQUEEZE_LEVEL });
     drawNow(); // the real frame goes on top before anything is shown
     if (PERF) PERF.warmDraw = performance.now() - t1;
   });
@@ -219,11 +223,12 @@ function renderShop(container) {
 
 function refreshScreens() {
   for (const el of document.querySelectorAll('.shop')) renderShop(el);
-  for (const el of document.querySelectorAll('.lvl-num')) el.textContent = save.level;
+  $('start-go').textContent = `Play level ${save.level}`;
   for (const el of document.querySelectorAll('.sound-toggle')) {
     el.textContent = audio.muted ? 'Sound: off' : 'Sound: on';
     el.setAttribute('aria-pressed', String(!audio.muted));
   }
+  pixelize(); // titles, buttons and numbers in the bitmap font
 }
 
 function showEnd() {
@@ -398,6 +403,7 @@ window.crowdRunner = {
 };
 
 function boot() {
+  installCssSprites();
   refreshScreens();
   if (DEMO || FF_T > 0 || FF_BOSS || FEATURE) {
     startLevel();
@@ -443,4 +449,5 @@ function boot() {
   requestAnimationFrame(frame);
 }
 
-boot();
+// The pixel art (Kenney sheets, atlas, floor textures) loads first; it is small.
+renderer.ready.catch((e) => console.error(e)).then(boot);

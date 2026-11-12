@@ -1,12 +1,19 @@
+/* Pixel-art look: square corners, hard 1-step shadows, Kenney's plum outline.
+   Titles, buttons and numbers are bitmap text (src/pixel/dom.js); the long
+   help text stays in the system font so it stays easy to read. */
 :root {
   --blue: #2f7cf6;
-  --blue-dark: #1b4fb0;
-  --red: #e2453c;
-  --gold: #ffc934;
-  --ink: #14202e;
-  --card: rgba(16, 26, 42, 0.86);
+  --blue-dark: #0e3a8c;
+  --red: #e84537;
+  --gold: #ffd23f;
+  --gold-dark: #a06c00;
+  --outline: #3f2631;
+  --panel: #1b1424;
+  --panel-2: #2a2036;
+  --line: #4a3a5c;
   --text: #f4f7fb;
-  --muted: #a9b6c7;
+  --muted: #b8b0c8;
+  --px-coin: none;
 }
 
 * { box-sizing: border-box; }
@@ -15,7 +22,7 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #4fae5f;
+  background: #1b1424;
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   touch-action: none;
@@ -35,20 +42,31 @@ html, body {
   width: 100%;
   height: 100%;
   touch-action: none;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
 }
 
 .hidden { display: none !important; }
 
+canvas.px-text {
+  display: inline-block;
+  vertical-align: middle;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+.px-wrap { display: inline-block; line-height: 0; vertical-align: middle; }
+
+/* Pixel frame: outline, inner bevel line, hard drop shadow. */
 .icon-btn {
   position: absolute;
-  top: calc(8px + env(safe-area-inset-top, 0px));
-  left: max(10px, calc(50vw - 250px));
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  top: calc(6px + env(safe-area-inset-top, 0px));
+  left: max(8px, calc(50vw - 250px));
+  width: 34px;
+  height: 34px;
   border: 0;
-  background: rgba(15, 25, 40, 0.55);
-  color: #fff;
+  border-radius: 0;
+  background: var(--panel-2);
+  box-shadow: 0 0 0 2px var(--outline), inset 0 0 0 2px var(--line), 0 3px 0 2px var(--outline);
   fill: #fff;
   display: grid;
   place-items: center;
@@ -62,38 +80,39 @@ html, body {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(10, 20, 35, 0.35);
+  background: rgba(27, 20, 36, 0.45);
   overflow-y: auto;
   touch-action: pan-y;
 }
 
 .card {
   width: 100%;
-  max-width: 380px;
-  background: var(--card);
-  border-radius: 22px;
-  padding: 22px 18px 16px;
+  max-width: 360px;
+  background: rgba(27, 20, 36, 0.94);
+  border-radius: 0;
+  padding: 18px 16px 14px;
   text-align: center;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
   margin: auto;
+  box-shadow:
+    0 0 0 3px var(--outline),
+    inset 0 0 0 2px var(--line),
+    0 6px 0 3px rgba(0, 0, 0, 0.35);
 }
 
 .logo {
-  margin: 0 0 10px;
-  font-size: 44px;
-  line-height: 0.95;
-  font-weight: 900;
-  letter-spacing: 1px;
+  margin: 2px 0 12px;
+  font-size: 32px;
+  line-height: 1;
   color: #fff;
-  text-shadow: 0 4px 0 var(--blue-dark);
 }
-.logo span { color: var(--gold); text-shadow: 0 4px 0 #b27b00; }
+.logo .l1 { color: #ffffff; font-size: 30px; }
+.logo .l2 { color: var(--gold); font-size: 36px; }
 
-h2 { margin: 2px 0 10px; font-size: 28px; font-weight: 900; }
+h2 { margin: 2px 0 12px; font-size: 22px; color: #fff; }
 h2.win { color: #7fdcff; }
 h2.lose { color: #ff7b72; }
 
-.how { color: var(--muted); font-size: 14px; line-height: 1.45; margin: 0 0 14px; }
+.how { color: var(--muted); font-size: 13.5px; line-height: 1.45; margin: 0 0 12px; }
 .how .good { color: #6fd0ff; }
 .how .bad { color: #ff7b72; }
 .how .gold { color: var(--gold); }
@@ -108,28 +127,32 @@ button {
 .big {
   width: 100%;
   border: 0;
-  border-radius: 16px;
-  padding: 15px 10px;
-  font-size: 20px;
-  font-weight: 900;
+  border-radius: 0;
+  padding: 12px 10px 14px;
+  font-size: 18px;
   color: #fff;
-  background: linear-gradient(#3f8cff, var(--blue));
-  box-shadow: 0 5px 0 var(--blue-dark);
-  margin-bottom: 14px;
+  background: var(--blue);
+  box-shadow:
+    0 0 0 3px var(--outline),
+    inset 0 3px 0 #6fb0ff,
+    inset 0 -5px 0 var(--blue-dark),
+    0 5px 0 3px var(--outline);
+  margin: 6px 0 18px;
 }
-.big:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--blue-dark); }
+.big:active { transform: translateY(3px); box-shadow: 0 0 0 3px var(--outline), inset 0 3px 0 #6fb0ff, inset 0 -3px 0 var(--blue-dark), 0 2px 0 3px var(--outline); }
 
 .ghost {
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: transparent;
-  color: var(--text);
-  border-radius: 12px;
-  padding: 9px 14px;
-  font-size: 14px;
-  font-weight: 700;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-2);
+  color: #e6e0f0;
+  padding: 8px 12px;
+  font-size: 13px;
+  box-shadow: 0 0 0 2px var(--outline), inset 0 0 0 2px var(--line), 0 3px 0 2px var(--outline);
 }
+.ghost:active { transform: translateY(2px); }
 
-.row-btns { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
+.row-btns { display: flex; gap: 12px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
 
 .stats {
   display: flex;
@@ -140,27 +163,24 @@ button {
   font-size: 13px;
   margin-bottom: 14px;
 }
-.stats b { display: block; color: #fff; font-size: 20px; }
+.stats b { display: block; color: #fff; font-size: 20px; margin-top: 4px; }
 
 .shop { text-align: left; }
 .shop-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-weight: 800;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 13px;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
-.coins { color: #fff; font-size: 16px; display: inline-flex; align-items: center; gap: 6px; }
+.coins { color: #fff; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
 .coin {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #e09e12 35%, var(--gold) 36%);
+  background: var(--px-coin) center / contain no-repeat;
+  image-rendering: pixelated;
   vertical-align: -2px;
 }
 .shop-row {
@@ -168,32 +188,32 @@ button {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
-  margin-bottom: 6px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  margin-bottom: 8px;
 }
 .shop-info { flex: 1; min-width: 0; }
-.shop-name { font-weight: 800; font-size: 14px; }
-.shop-name small { color: var(--muted); font-weight: 600; margin-left: 4px; }
-.shop-effect { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.shop-name { font-size: 13px; color: #fff; }
+.shop-name small { color: var(--muted); font-size: 11px; margin-left: 6px; }
+.shop-effect { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .shop-effect b { color: #9ff0a8; font-weight: 700; }
 .buy {
   border: 0;
-  border-radius: 10px;
-  padding: 8px 10px;
-  min-width: 70px;
-  font-weight: 900;
-  color: var(--ink);
-  background: var(--gold);
-  box-shadow: 0 3px 0 #b27b00;
+  border-radius: 0;
+  padding: 7px 8px 9px;
+  min-width: 68px;
+  font-size: 13px;
+  color: #fff;
+  background: #e09e12;
+  box-shadow: 0 0 0 2px var(--outline), inset 0 2px 0 #ffe066, inset 0 -3px 0 var(--gold-dark), 0 3px 0 2px var(--outline);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
 }
-.buy:disabled { background: #556070; color: #c4ccd6; box-shadow: none; cursor: default; }
+.buy:disabled { background: #4a4458; color: #a8a0b8; box-shadow: 0 0 0 2px var(--outline), inset 0 -3px 0 #352f42; cursor: default; }
 .buy .coin { width: 12px; height: 12px; }
 
 @media (min-height: 760px) {
-  .card { padding: 28px 22px 20px; }
+  .card { padding: 24px 20px 18px; }
 }
