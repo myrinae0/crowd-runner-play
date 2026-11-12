@@ -17,7 +17,7 @@ import { RAPID_MULT, SAW_R, X_MIN, X_MAX, SQUEEZE_SHRINK, ARROW_R, AMBUSH_FROM, 
 
 const ambushMult = (s) => (s.level >= AMBUSH_FROM ? AMBUSH_MULT : 1);
 import { volleyStreams, enemyX, enemyRadius, contactCost } from './sim.js';
-import { WT, weaponUnlocked, meleeDamage } from './weapons.js';
+import { WT, weaponUnlocked, meleeDamage, meleeShare } from './weapons.js';
 import { sawX, crusherLift, chordOverlapFrac, slideOffset, swapCount } from './hazards.js';
 
 const LOOK = 170;
@@ -33,7 +33,7 @@ export function weaponModel(s, w) {
   if (w === 'shield') return { w, shots: WT.shieldFire, gate: WT.shieldFire, clash: ws.clash, amb: ws.clash, hit: () => 0 };
   if (w === 'melee') {
     const d = meleeDamage(s.crowd.count);
-    return { w, shots: 0, gate: 0, clash: 1, amb: 1, hit: (e) => d * (e.kind === 'giant' || e.kind === 'wall' ? ws.bigHit : 1) };
+    return { w, shots: 0, gate: 0, clash: 1, amb: WT.meleeExposed, hit: (e) => d * (e.kind === 'giant' || e.kind === 'wall' ? ws.bigHit : meleeShare(e)) };
   }
   return ws.tuner !== 1 ? { ...RIFLE_MODEL, gate: ws.tuner } : RIFLE_MODEL;
 }
@@ -319,7 +319,7 @@ export function outlook(s, w, threats, row) {
       // Towers: shoot them down, or soak the arrows.
       const arrows = Math.max(0, (e.hp - shots) / Math.max(1, e.hp)) * 3;
       const per = 2 + c.count * 0.05;
-      loss += arrows * per * 0.35 * (w === 'shield' && armed ? 1 - WT.arrowBlock : 1);
+      loss += arrows * per * 0.35 * (w === 'shield' && armed ? 1 - WT.arrowBlock : w === 'melee' && armed ? WT.meleeExposed : 1);
       continue;
     }
     if (e.x === undefined) {

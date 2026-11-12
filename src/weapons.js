@@ -10,8 +10,10 @@
 //   melee   no bullets. While armed, the crowd swings an arc just ahead of
 //           it twice a second, on a steady rhythm, whether or not anything
 //           is in reach (an empty swing is just a whoosh). Hits everything in
-//           the arc; heavy blows vs giants and walls. Can't touch gates or
-//           anything out of reach.
+//           the arc; heavy blows vs giants and walls, light ones vs ordinary
+//           squads (a specialist, not a squad blender). Can't touch gates or
+//           anything out of reach, and with no ranged answer arrows and
+//           ambushes cost more while it is armed.
 //
 // Switching takes `switchTime` seconds; nothing fires (and the shield doesn't
 // block) until the new weapon is armed. The first move after a switch is
@@ -26,7 +28,7 @@ export const weaponUnlocked = (level, w) => level >= WEAPON_UNLOCK[w];
 // Shown once at the start of the level that unlocks the weapon.
 export const WEAPON_HINTS = {
   shield: ['SHIELD UNLOCKED!', 'Tap the shield (or 2). Clashes cost half. Slow fire'],
-  melee: ['MELEE UNLOCKED!', 'Tap the sword (or 3). Slash squads, giants, walls'],
+  melee: ['MELEE UNLOCKED!', 'Tap the sword (or 3). Smash giants, walls, bosses'],
 };
 
 // Tunables (see BALANCE.md for how they were picked).
@@ -48,18 +50,21 @@ export const WT = {
   rallyStep: 0.07,     // Rally: share of the blocked enemies that join, per level
   fortressT: 1.2, fortressTStep: 0.4, fortressCd: 9, fortressCdStep: 1,
   meleeCd: 0.5,        // seconds between swings (a steady rhythm while melee is armed)
-  swingStep: 0.14,     // Swing speed: +14% slashes per level
+  meleeMinCd: 0.35,    // the fastest melee ever swings, after Swing speed, Bloodlust and the boost
+  swingStep: 0.06,     // Swing speed: +6% slashes per level
   reach: 18,           // slash reach beyond the crowd's edge (world units)
-  reachStep: 1.5,
+  reachStep: 0.5,
   arcHalf: 55,         // half-angle of the slash (degrees)
-  arcStep: 9,
+  arcStep: 5,
   meleeBase: 5, meleeK: 5.5, // slash damage = base + k * sqrt(crowd)
   meleeBig: 3,         // slashes do triple damage to giants and walls (heavy blows)
+  meleeSquad: 0.6,     // ordinary squads take 60% of a slash (splitters and their halves take it all)
+  meleeExposed: 1.5,   // no ranged answer: arrows and ambushes cost 50% more while melee is armed
   meleeCap: 4000,
-  bloodStep: 0.12,     // Bloodlust: +12% swing speed per stacked kill per level...
+  bloodStep: 0.03,     // Bloodlust: +3% swing speed per stacked kill per level...
   bloodMax: 5,         // ...up to this many stacks
   bloodReset: 2.5,     // stacks drop after this long without a kill
-  recruitStep: 0.06,   // Recruit: share of slashed squad units that join, per level
+  recruitStep: 0.03,   // Recruit: share of slashed squad units that join, per level
   whirlEvery: [0, 4, 3, 2], // Whirlwind level -> every Nth slash is a full circle
   slayerStep: 0.6,     // Giant slayer: x(1 + this * level) more vs giants, walls, boss
   ricoR: 26, ricoRStep: 6, // Ricochet: how far a bounce can reach
@@ -85,7 +90,7 @@ export function weaponStats(u = {}) {
     fortress: L('fortress'),
     fortressT: WT.fortressT + WT.fortressTStep * L('fortress'),
     fortressCd: WT.fortressCd - WT.fortressCdStep * L('fortress'),
-    meleeCd: WT.meleeCd / (1 + WT.swingStep * L('swing')),
+    meleeCd: Math.max(WT.meleeMinCd, WT.meleeCd / (1 + WT.swingStep * L('swing'))),
     reach: WT.reach + WT.reachStep * L('arc'),
     arcHalf: ((WT.arcHalf + WT.arcStep * L('arc')) * Math.PI) / 180,
     blood: WT.bloodStep * L('blood'),
@@ -100,6 +105,14 @@ export function weaponStats(u = {}) {
     magnetR: L('magnet') > 0 ? WT.magnetR + WT.magnetStep * L('magnet') : 0,
     lastStand: WT.lastStand * L('last'),
   };
+}
+
+// Share of a slash an enemy takes (before Giant slayer): heavy blows vs giants
+// and walls, less vs ordinary squads.
+export function meleeShare(e) {
+  if (e.kind === 'giant' || e.kind === 'wall') return WT.meleeBig;
+  if (e.kind === 'squad') return e.split || e.splitChild || e.wasSplit ? 1 : WT.meleeSquad;
+  return 1;
 }
 
 // Slash damage for a crowd of `count` (applied to every target in the arc).

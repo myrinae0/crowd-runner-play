@@ -34,7 +34,7 @@ import {
 import { statsFromUpgrades } from './save.js';
 import { hashSeed } from './rng.js';
 import {
-  WEAPONS, WEAPON_UNLOCK, WEAPON_HINTS, WT, weaponStats, weaponUnlocked, meleeDamage, bashDamage, inArc, rectInArc,
+  WEAPONS, WEAPON_UNLOCK, WEAPON_HINTS, WT, weaponStats, weaponUnlocked, meleeDamage, meleeShare, bashDamage, inArc, rectInArc,
 } from './weapons.js';
 import { MAX_CROWD } from './config.js';
 import { WARBAND_SHARE } from './level.js';
@@ -246,6 +246,7 @@ function killEnemyUnits(s, e, dmg) {
     } else if (e.split && e.count >= 2) {
       // Splitters: the first hit breaks them into two squads that peel apart.
       e.split = false;
+      e.wasSplit = true;
       const half = Math.floor(e.count / 2);
       e.count -= half;
       const side = e.x < 50 ? 1 : -1; // the bigger gap gets the faster one
@@ -515,7 +516,9 @@ function updateArrows(s, r) {
       emit(s, { type: 'shieldBlock', x: a.tx, y: a.ty, n: 0, arrow: true, fort });
       if (s.ws.reflect > 0) reflectArrow(s, a, r);
     } else {
-      loseCrowd(s, arrowLoss(c.count, a.kills), a.tx, a.ty, 'arrow');
+      // Melee has no answer at range: arrows hit it harder.
+      const n = arrowLoss(c.count, a.kills);
+      loseCrowd(s, armedWeapon(s) === 'melee' ? Math.min(c.count, Math.ceil(n * WT.meleeExposed)) : n, a.tx, a.ty, 'arrow');
     }
   }
   s.arrows.length = keep;
@@ -701,7 +704,8 @@ function updateWeapon(s, want, squeezeOn) {
 
 // Melee: while melee is armed the crowd swings on a steady rhythm (one swing
 // per cooldown), whether or not anything is in reach. A swing hits every
-// enemy in the arc (and the boss) for meleeDamage(crowd); one that hits
+// enemy in the arc (and the boss) for meleeDamage(crowd) x meleeShare(e)
+// (heavy vs giants and walls, light vs ordinary squads); one that hits
 // nothing is just a whoosh. The lunge (double reach) after a switch is held
 // for the first swing with a target in reach, or LUNGE_HOLD s after arming.
 const MELEE_SLACK = 8;
@@ -711,7 +715,8 @@ function slashHits(s, e, r, reach, half, full) {
   return rectInArc(s.crowd.x, s.dist, r, reach, half, full, e.x0, e.x1, e.y, WALL_HALF);
 }
 // Seconds to the next swing: Swing speed, Bloodlust stacks, Quick draw boost.
-const swingCdOf = (w, ws) => (ws.meleeCd / (1 + ws.blood * w.blood)) * (w.boost > 0 ? WT.boostSwing : 1);
+// Never faster than WT.meleeMinCd, however they stack.
+const swingCdOf = (w, ws) => Math.max(WT.meleeMinCd, (ws.meleeCd / (1 + ws.blood * w.blood)) * (w.boost > 0 ? WT.boostSwing : 1));
 function updateMelee(s, r) {
   const w = s.weapon, ws = s.ws, c = s.crowd;
   if (w.bloodT > 0) { w.bloodT -= DT; if (w.bloodT <= 0) w.blood = 0; }
@@ -747,7 +752,7 @@ function updateMelee(s, r) {
     if (!e.alive || Math.abs(e.y - s.dist) > far || !slashHits(s, e, r, reach, half, whirl)) continue;
     hits += 1;
     const big = e.kind === 'giant' || e.kind === 'wall';
-    const k = killEnemyUnits(s, e, Math.round(dmg * (big ? ws.bigHit : 1)));
+    const k = killEnemyUnits(s, e, Math.round(dmg * (big ? ws.bigHit : meleeShare(e)))); // light vs ordinary squads
     if (e.kind === 'squad') units += k;
     if (!e.alive) kills += 1;
   }
@@ -883,7 +888,8 @@ export function step(s, input = {}) {
         // (a raised shield halves that too).
         e.alive = false;
         const amb = ambushCost(s, e);
-        const n = Math.min(c.count, armedWeapon(s) === 'shield' ? Math.ceil(amb * clashShare(s)) : amb);
+        const arm = armedWeapon(s);
+        const n = Math.min(c.count, arm === 'shield' ? Math.ceil(amb * clashShare(s)) : arm === 'melee' ? Math.ceil(amb * WT.meleeExposed) : amb);
         if (n > 0) {
           emit(s, { type: 'ambush', n, x: e.x, y: e.y, kind: e.kind });
           loseCrowd(s, n, e.x, s.dist, 'ambush');
