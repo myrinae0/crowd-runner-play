@@ -6,11 +6,37 @@ export const SAVE_KEY = 'crowd-runner-save-v1';
 // (the same number as DEFAULT_VOL in audio.js, which save.js doesn't import).
 export const DEFAULT_VOL = 80;
 
+// Every upgrade, flat by key (the save stores levels by key). `tab` puts it
+// in the shop: one tab per weapon plus General. crowd, rate and dmg are the
+// original three (rate and dmg are the rifle's; older saves keep their levels).
+// What each level does is in weaponStats() (src/weapons.js) and
+// statsFromUpgrades() below; `info` is the shop's one-line description.
 export const UPGRADES = {
-  crowd: { name: 'Starting crowd', base: 12, growth: 1.42, max: 30 },
-  rate: { name: 'Fire rate', base: 18, growth: 1.45, max: 20 },
-  dmg: { name: 'Bullet damage', base: 30, growth: 1.7, max: 10 },
+  crowd: { name: 'Starting crowd', tab: 'general', base: 12, growth: 1.42, max: 30, info: 'More soldiers at the start' },
+  magnet: { name: 'Coin magnet', tab: 'general', base: 25, growth: 1.6, max: 5, info: 'Pulls coins in from further' },
+  last: { name: 'Last stand', tab: 'general', base: 120, growth: 2.2, max: 3, info: 'Once a run, a wipeout leaves you soldiers' },
+  quick: { name: 'Quick draw', tab: 'general', base: 45, growth: 1.75, max: 4, info: 'Faster switching, then a short boost' },
+  rate: { name: 'Fire rate', tab: 'rifle', base: 18, growth: 1.45, max: 20, info: 'Shots per second' },
+  dmg: { name: 'Bullet damage', tab: 'rifle', base: 30, growth: 1.7, max: 10, info: 'Damage per bullet' },
+  pierce: { name: 'Pierce', tab: 'rifle', base: 60, growth: 1.9, max: 3, info: 'Bullets go through enemies' },
+  rico: { name: 'Ricochet', tab: 'rifle', base: 70, growth: 1.9, max: 3, info: 'A kill bounces the bullet on' },
+  tuner: { name: 'Gate tuner', tab: 'rifle', base: 40, growth: 1.7, max: 4, info: 'Shots raise gates faster' },
+  block: { name: 'Block', tab: 'shield', base: 35, growth: 1.6, max: 5, info: 'Fewer losses in clashes' },
+  bash: { name: 'Bash', tab: 'shield', base: 40, growth: 1.7, max: 4, info: 'Shove squads back and stun them' },
+  reflect: { name: 'Reflect', tab: 'shield', base: 45, growth: 1.75, max: 3, info: 'Blocked arrows fly back at the tower' },
+  rally: { name: 'Rally', tab: 'shield', base: 60, growth: 1.8, max: 4, info: 'Some blocked enemies join you' },
+  fortress: { name: 'Fortress', tab: 'shield', base: 50, growth: 1.8, max: 3, info: 'Squeeze: immune to saws and arrows' },
+  swing: { name: 'Swing speed', tab: 'melee', base: 35, growth: 1.6, max: 5, info: 'Slash more often' },
+  arc: { name: 'Arc width', tab: 'melee', base: 35, growth: 1.65, max: 4, info: 'Wider, longer slashes' },
+  blood: { name: 'Bloodlust', tab: 'melee', base: 45, growth: 1.75, max: 4, info: 'Kills speed up the next slash' },
+  recruit: { name: 'Recruit', tab: 'melee', base: 60, growth: 1.8, max: 4, info: 'Some slashed enemies join you' },
+  whirl: { name: 'Whirlwind', tab: 'melee', base: 70, growth: 1.9, max: 3, info: 'Some slashes spin a full circle' },
+  slayer: { name: 'Giant slayer', tab: 'melee', base: 40, growth: 1.7, max: 5, info: 'Big damage to giants, walls, boss' },
 };
+export const UPGRADE_TABS = ['general', 'rifle', 'shield', 'melee'];
+export const TAB_NAMES = { general: 'General', rifle: 'Rifle', shield: 'Shield', melee: 'Melee' };
+export const tabKeys = (tab) => Object.keys(UPGRADES).filter((k) => UPGRADES[k].tab === tab);
+const zeroUpgrades = () => Object.fromEntries(Object.keys(UPGRADES).map((k) => [k, 0]));
 
 export function defaultSave() {
   // Sound effects and music are on for new players. `muted` is the sound
@@ -18,7 +44,7 @@ export function defaultSave() {
   // `sfxVol` and `musicVol` are the volume sliders (0-100); the switches don't
   // change them.
   return {
-    v: 1, coins: 0, level: 1, best: 1, upgrades: { crowd: 0, rate: 0, dmg: 0 },
+    v: 1, coins: 0, level: 1, best: 1, upgrades: zeroUpgrades(),
     muted: false, music: true, sfxVol: DEFAULT_VOL, musicVol: DEFAULT_VOL,
   };
 }
@@ -61,11 +87,9 @@ export function sanitize(raw) {
     coins: int(raw.coins, 0, 1e9, 0),
     level: int(raw.level, 1, 9999, 1),
     best: int(raw.best, 1, 9999, 1),
-    upgrades: {
-      crowd: int(u.crowd, 0, UPGRADES.crowd.max, 0),
-      rate: int(u.rate, 0, UPGRADES.rate.max, 0),
-      dmg: int(u.dmg, 0, UPGRADES.dmg.max, 0),
-    },
+    // Every known upgrade, clamped to its max; unknown keys are dropped and
+    // missing ones (saves from before the weapons) start at 0.
+    upgrades: Object.fromEntries(Object.keys(UPGRADES).map((k) => [k, int(u[k], 0, UPGRADES[k].max, 0)])),
     ...soundPrefs(raw, d),
     sfxVol: vol(raw.sfxVol),
     musicVol: vol(raw.musicVol),

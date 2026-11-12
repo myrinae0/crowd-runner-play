@@ -290,3 +290,72 @@ button {
   box-shadow: 0 0 0 2px var(--outline), inset 0 2px 0 #ffe066, inset 0 -4px 0 var(--gold-dark), 0 3px 0 2px var(--outline);
 }
 .vol.off::-moz-range-thumb { background: #8a8298; box-shadow: 0 0 0 2px var(--outline), inset 0 2px 0 #b8b0c8, inset 0 -4px 0 #4a4458, 0 3px 0 2px var(--outline); }
+
+/* Weapon bar: three square pixel buttons at the bottom left, clear of the
+   squeeze pad (bottom right). 52 px targets. The fill rises while a switch
+   arms (--arm 0-1); the armed weapon has a gold frame; locked ones show a
+   padlock. Icons are code-drawn pixel art (CSS variables set in dom.js). */
+.weapon-bar {
+  position: absolute;
+  left: max(10px, calc(50vw - 250px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  gap: 10px;
+  z-index: 2;
+}
+.wbtn {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  overflow: hidden;
+  background: rgba(42, 32, 54, 0.82);
+  box-shadow: 0 0 0 2px var(--outline), inset 0 0 0 2px var(--line), 0 3px 0 2px var(--outline);
+  touch-action: none;
+  --arm: 0;
+}
+.wbtn .wicon {
+  position: absolute;
+  inset: 8px;
+  background: center / 36px 36px no-repeat;
+  image-rendering: pixelated;
+}
+.wbtn[data-w="rifle"] .wicon { background-image: var(--px-rifle); }
+.wbtn[data-w="shield"] .wicon { background-image: var(--px-shield); }
+.wbtn[data-w="melee"] .wicon { background-image: var(--px-melee); }
+.wbtn .wkey { position: absolute; left: 4px; top: 3px; font-size: 9px; color: var(--muted); line-height: 1; }
+.wbtn .wfill {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: calc(var(--arm) * 100%);
+  background: rgba(255, 210, 63, 0.45);
+  box-shadow: inset 0 2px 0 #ffe066;
+  display: none;
+}
+.wbtn.arming .wfill { display: block; }
+.wbtn.on { background: rgba(47, 124, 246, 0.9); box-shadow: 0 0 0 2px var(--outline), inset 0 0 0 2px #ffd23f, 0 3px 0 2px var(--outline); }
+.wbtn.arming { background: rgba(42, 32, 54, 0.9); }
+.wbtn.locked { background: rgba(42, 32, 54, 0.55); cursor: default; }
+.wbtn.locked .wicon { background-image: var(--px-lock); background-size: 24px 24px; opacity: 0.75; }
+.wbtn.locked .wkey { opacity: 0.5; }
+.wbtn:active:not(.locked) { transform: translateY(2px); }
+
+/* Shop tabs: one per weapon plus General. */
+.shop-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.shop-tab {
+  flex: 1 1 auto;
+  min-height: 44px;
+  border: 0;
+  border-radius: 0;
+  padding: 6px 3px;
+  font-size: 12px;
+  color: #e6e0f0;
+  background: var(--panel-2);
+  box-shadow: 0 0 0 2px var(--outline), inset 0 0 0 2px var(--line);
+}
+.shop-tab.sel { background: var(--blue); color: #fff; box-shadow: 0 0 0 2px var(--outline), inset 0 0 0 2px #ffd23f; }
+.shop-tab.dim { color: var(--muted); }
+.shop-note { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+.shop-info .shop-desc { color: var(--muted); font-size: 11.5px; margin-top: 3px; }

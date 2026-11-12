@@ -33,6 +33,11 @@ import {
 } from './combat.js';
 import { statsFromUpgrades } from './save.js';
 import { hashSeed } from './rng.js';
+import {
+  WEAPONS, WEAPON_UNLOCK, WEAPON_HINTS, WT, weaponStats, weaponUnlocked, meleeDamage, inArc, rectInArc,
+} from './weapons.js';
+import { MAX_CROWD } from './config.js';
+import { WARBAND_SHARE } from './level.js';
 
 // Boss attacks (v2): telegraph seconds, gap between attacks, share of the
 // soldiers under an attack that it removes.
@@ -50,7 +55,15 @@ const MAX_EVENTS = 400;
 
 export function createRun(levelDef, upgrades = {}) {
   const stats = statsFromUpgrades(upgrades);
+  const ws = weaponStats(upgrades);
   const clone = (o) => JSON.parse(JSON.stringify(o));
+  const hints = clone(levelDef.hints || []);
+  // A weapon's unlock level opens with its hint card (early, before anything else).
+  for (const w of WEAPONS) {
+    if (WEAPON_HINTS[w] && levelDef.level === WEAPON_UNLOCK[w]) {
+      hints.push({ y: 160, title: WEAPON_HINTS[w][0], sub: WEAPON_HINTS[w][1], shown: false, weapon: w });
+    }
+  }
   return {
     level: levelDef.level,
     seed: levelDef.seed,
@@ -63,6 +76,15 @@ export function createRun(levelDef, upgrades = {}) {
     // squeeze: 0 = spread out (normal), 1 = packed tight; packed is the held input.
     crowd: { x: 50, count: stats.startCrowd, peak: stats.startCrowd, squeeze: 0, packed: false },
     stats,
+    ws, // weapon numbers from the upgrades (src/weapons.js)
+    // Weapon mode. cur is the selected weapon; it is armed once armT reaches 0
+    // (nothing fires until then). first: the first move after a switch is
+    // stronger. boost: Quick draw's boost after arming. swing*/blood*: melee.
+    // bashCd: shield bash. fortT/fortCd: Fortress. lastStand: still unused.
+    weapon: {
+      cur: 'rifle', armT: 0, since: -99, first: false, boost: 0, swingCd: 0, swingN: 0, blood: 0, bloodT: 0,
+      slash: null, bashCd: 0, fortT: 0, fortCd: 0, lastStand: ws.lastStand > 0, tuneAcc: 0,
+    },
     fireCd: 0,
     buffs: { rapid: 0, spread: 0, rocket: 0, laser: 0, magnet: 0 },
     rocketCd: 0,
@@ -74,7 +96,7 @@ export function createRun(levelDef, upgrades = {}) {
     hazards: clone(levelDef.hazards || []),
     segments: clone(levelDef.segments || []),
     fork: null, // { id, side: 'left' | 'right' } once the crowd enters a fork
-    hints: clone(levelDef.hints || []),
+    hints,
     loss: {}, // fractional soldier losses per cause (hazards drain gradually)
     nextId: 1000000, // ids for things spawned during the run (splitter halves)
     arrows: [], // arrows in flight from archer towers
@@ -99,26 +121,46 @@ export function volleyStreams(count, packed = false) {
   return Math.min(MAX_STREAMS, 1 + Math.floor(count / STREAM_EVERY));
 }
 
-// Volleys per second right now.
+// The weapon that is armed right now (null while switching).
+export const armedWeapon = (s) => (s.weapon.armT > 0 ? null : s.weapon.cur);
+// Share of a clash / ambush the shield lets through (Block, Quick draw boost).
+export const clashShare = (s) => s.ws.clash * (s.weapon.boost > 0 ? WT.boostClash : 1);
+
+// Volleys per second right now. Pickup buffs (rapid) only work with the rifle;
+// the shield fires at a fraction of the rifle's rate.
 export function fireRateOf(s) {
-  return s.stats.fireRate * (s.buffs.rapid > 0 ? RAPID_MULT : 1) * (s.crowd.packed ? SQUEEZE_FIRE : 1);
+  const arm = armedWeapon(s);
+  const rifle = arm !== 'shield';
+  let r = s.stats.fireRate * (s.buffs.rapid > 0 && rifle ? RAPID_MULT : 1) * (s.crowd.packed ? SQUEEZE_FIRE : 1);
+  if (arm === 'shield') r *= WT.shieldFire;
+  if (s.weapon.boost > 0 && arm !== 'melee') r *= WT.boostRate;
+  return r;
 }
+
+// Bullets all have the same fields (one hidden class): p = enemies it can
+// still hit (Pierce), rico = bounces left (Ricochet), tune = rifle shot (Gate
+// tuner), seen = ids of the enemies it already went through (null until then).
+const bullet = (x, y, vx, vy, dmg, laser, p, rico, tune) => ({ x, y, vx, vy, dmg, laser, p, rico, tune, seen: null, rocket: false, reflect: false });
 
 function fire(s) {
   const c = s.crowd;
   const r = crowdR(s);
   const y = s.dist + r * 0.5;
-  const dmg = s.stats.damage;
+  const rifle = armedWeapon(s) === 'rifle';
+  let dmg = s.stats.damage;
+  if (rifle && s.weapon.first) { dmg *= 2; s.weapon.first = false; } // first volley after a switch
   const n = volleyStreams(c.count, c.packed);
   const spacing = Math.min(3.2, r * 0.45);
-  const laser = s.buffs.laser > 0; // laser shots fly through gates
+  const laser = rifle && s.buffs.laser > 0; // laser shots fly through gates
+  const p = rifle ? s.ws.pierce : 1;
+  const rico = rifle ? s.ws.rico : 0;
   for (let i = 0; i < n; i++) {
     const x = c.x + (i - (n - 1) / 2) * spacing;
-    s.bullets.push({ x, y, vx: 0, vy: BULLET_SPEED, dmg, laser });
+    s.bullets.push(bullet(x, y, 0, BULLET_SPEED, dmg, laser, p, rico, rifle));
   }
-  if (s.buffs.spread > 0) {
-    s.bullets.push({ x: c.x, y, vx: -SPREAD_VX, vy: BULLET_SPEED, dmg, laser });
-    s.bullets.push({ x: c.x, y, vx: SPREAD_VX, vy: BULLET_SPEED, dmg, laser });
+  if (rifle && s.buffs.spread > 0) {
+    s.bullets.push(bullet(c.x, y, -SPREAD_VX, BULLET_SPEED, dmg, laser, p, rico, rifle));
+    s.bullets.push(bullet(c.x, y, SPREAD_VX, BULLET_SPEED, dmg, laser, p, rico, rifle));
   }
   emit(s, { type: 'shot' });
 }
@@ -146,6 +188,8 @@ export function scaledSize(s, e) {
     if (o.alive && o.kind === 'squad' && !o.splitChild && o.y > s.dist && o.y - s.dist < SCALE_VIEW + 60) group += 1;
   }
   const counted = Math.max(0, s.crowd.count - SCALE_FREE); // small crowds keep v2-sized squads
+  // Warbands (level.js) take a bigger share and don't split it with others.
+  if (e.warband) return Math.round(counted * squadShare(s.level) * WARBAND_SHARE);
   return Math.round((counted * squadShare(s.level)) / Math.max(1, group));
 }
 
@@ -176,6 +220,8 @@ export function contactCost(e) {
   return e.hp;
 }
 
+// Damage an enemy. Returns how many squad units died (0 for others); check
+// e.alive to see whether it was destroyed.
 function killEnemyUnits(s, e, dmg) {
   if (e.kind === 'squad') {
     if (e.shield > 0) {
@@ -184,7 +230,7 @@ function killEnemyUnits(s, e, dmg) {
       e.lastHit = s.t;
       emit(s, { type: 'shieldHit', x: e.x, y: e.y - squadRadius(e.count) });
       if (e.shield === 0) emit(s, { type: 'shieldBreak', x: e.x, y: e.y });
-      return;
+      return 0;
     }
     const k = Math.min(e.count, dmg);
     e.count -= k;
@@ -207,6 +253,7 @@ function killEnemyUnits(s, e, dmg) {
       e.start = e.count;
       emit(s, { type: 'split', x: e.x, y: e.y });
     }
+    return k;
   } else if (e.kind === 'giant') {
     e.hp -= dmg;
     e.lastHit = s.t;
@@ -227,6 +274,47 @@ function killEnemyUnits(s, e, dmg) {
       emit(s, { type: 'kill', x: (e.x0 + e.x1) / 2, y: e.y, n: e.start, wall: true, kind: e.kind });
     }
   }
+  return 0;
+}
+
+// Soldiers joining the crowd (Rally, Recruit).
+function addCrowd(s, n, via, x, y) {
+  if (n <= 0) return;
+  const c = s.crowd;
+  c.count = Math.min(MAX_CROWD, c.count + n);
+  c.peak = Math.max(c.peak, c.count);
+  emit(s, { type: 'join', n, via, x, y });
+}
+
+// Gate hits for one rifle shot (Gate tuner adds fractions that add up).
+function tunedHits(s, b) {
+  if (!b.tune) return 1;
+  const w = s.weapon;
+  w.tuneAcc += s.ws.tuner;
+  const n = Math.floor(w.tuneAcc + 1e-9);
+  w.tuneAcc -= n;
+  return n;
+}
+
+// Ricochet: a bullet that killed `e` flies on to the nearest enemy ahead.
+function bounce(s, b, e) {
+  const ex = enemyX(e);
+  let best = null, bd = s.ws.ricoR * s.ws.ricoR;
+  for (const o of s.enemies) {
+    if (!o.alive || o === e || o.y <= s.dist) continue;
+    const dx = enemyX(o) - ex, dy = o.y - e.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bd) { bd = d2; best = o; }
+  }
+  if (!best) return false;
+  const dx = enemyX(best) - ex, dy = best.y - e.y;
+  const d = Math.sqrt(dx * dx + dy * dy) || 1;
+  b.x = ex; b.y = e.y;
+  b.vx = (dx / d) * BULLET_SPEED; b.vy = (dy / d) * BULLET_SPEED;
+  b.rico -= 1;
+  (b.seen || (b.seen = [])).push(e.id);
+  emit(s, { type: 'ricochet', x: ex, y: e.y });
+  return true;
 }
 
 // Rocket blast: hurts every enemy within ROCKET_SPLASH of the impact.
@@ -254,7 +342,7 @@ function updateBullets(s) {
     const prevY = b.y;
     b.x += b.vx * DT;
     b.y += b.vy * DT;
-    if (b.y - s.dist > BULLET_RANGE || b.x < 0 || b.x > 100) continue;
+    if (b.y - s.dist > BULLET_RANGE || b.y < s.dist - 5 || b.x < 0 || b.x > 100) continue;
     if (s.segments.length && b.x > 46 && b.x < 54) {
       const fk = segmentAt(s.segments, 'fork', b.y);
       if (fk && b.x >= fk.d0 && b.x <= fk.d1) continue; // the hedge stops it
@@ -267,28 +355,35 @@ function updateBullets(s) {
       const g = gateAt(row, b.x);
       if (g) {
         const before = gateMood(g);
-        hitGate(g, 1);
+        hitGate(g, tunedHits(s, b));
         g.lastHit = s.t;
         emit(s, { type: 'gateHit', x: b.x, y: row.y, flipped: before !== gateMood(g), mood: gateMood(g) });
         hit = true;
         break;
       }
     }
+    let pass = false; // went through (Pierce) or bounced on (Ricochet)
     if (!hit) {
       for (const e of s.enemies) {
-        if (!e.alive) continue;
+        if (!e.alive || (b.seen && b.seen.includes(e.id))) continue;
+        let touch;
         if (e.kind === 'squad' || e.kind === 'giant') {
           const r = enemyRadius(e) + 0.8;
           const dx = b.x - e.x;
           const dy = b.y - e.y;
-          if (dx * dx + dy * dy < r * r) { if (!b.rocket) killEnemyUnits(s, e, b.dmg); hit = true; break; }
-        } else if (b.x >= e.x0 && b.x <= e.x1 && prevY < e.y + WALL_HALF && b.y >= e.y - WALL_HALF) {
-          if (!b.rocket) killEnemyUnits(s, e, b.dmg);
-          hit = true; break;
+          touch = dx * dx + dy * dy < r * r;
+        } else {
+          touch = b.x >= e.x0 && b.x <= e.x1 && Math.min(prevY, b.y) < e.y + WALL_HALF && Math.max(prevY, b.y) >= e.y - WALL_HALF;
         }
+        if (!touch) continue;
+        if (b.rocket) { hit = true; break; }
+        killEnemyUnits(s, e, b.dmg);
+        if (!e.alive && b.rico > 0 && bounce(s, b, e)) { pass = true; break; }
+        if (b.p > 1) { b.p -= 1; (b.seen || (b.seen = [])).push(e.id); pass = true; break; }
+        hit = true; break;
       }
     }
-    if (!hit && b0.alive && b.y >= b0.y - b0.r && Math.abs(b.x - b0.x) < b0.r) {
+    if (!hit && !pass && b0.alive && b.y >= b0.y - b0.r && Math.abs(b.x - b0.x) < b0.r) {
       if (!b.rocket) {
         b0.hp = Math.max(0, b0.hp - b.dmg);
         b0.lastHit = s.t;
@@ -330,7 +425,7 @@ function updateHazards(s, r) {
   for (const h of s.hazards) {
     const dy = h.y - s.dist;
     if (h.kind === 'saw') {
-      if (Math.abs(dy) >= r) continue;
+      if (Math.abs(dy) >= r || s.weapon.fortT > 0) continue; // Fortress: saws can't hurt
       const w = Math.sqrt(r * r - dy * dy); // half-width of the crowd at the blade's row
       const x = sawX(h, s.t);
       const frac = chordOverlapFrac(c.x, w, x - SAW_R, x + SAW_R);
@@ -393,7 +488,7 @@ function updateTowers(s) {
     const top = (e.x0 + e.x1) / 2;
     s.arrows.push({
       id: s.tick * 8 + s.arrows.length, x0: top, y0: e.y, tx: c.x, ty: s.dist + s.speed * ARROW_FLIGHT,
-      t0: s.t, t1: s.t + ARROW_FLIGHT, kills: e.kills,
+      t0: s.t, t1: s.t + ARROW_FLIGHT, kills: e.kills, src: e.id,
     });
     emit(s, { type: 'arrowFire', x: top, y: e.y });
   }
@@ -411,9 +506,32 @@ function updateArrows(s, r) {
     if (s.t < a.t1 - 1e-9) { s.arrows[keep++] = a; continue; }
     const hit = Math.abs(c.x - a.tx) < r * 0.9 + ARROW_R && Math.abs(s.dist - a.ty) < r + ARROW_R;
     emit(s, { type: 'arrowLand', x: a.tx, y: a.ty, hit });
-    if (hit) loseCrowd(s, arrowLoss(c.count, a.kills), a.tx, a.ty, 'arrow');
+    if (!hit) continue;
+    // Fortress stops every arrow; a shield stops about half (decided by the
+    // arrow's id, so runs stay deterministic) and Reflect sends them back.
+    const fort = s.weapon.fortT > 0;
+    if (fort || (armedWeapon(s) === 'shield' && hashSeed(s.seed, s.level, 'arrow', a.id) / 4294967296 < WT.arrowBlock)) {
+      emit(s, { type: 'shieldBlock', x: a.tx, y: a.ty, n: 0, arrow: true, fort });
+      if (s.ws.reflect > 0) reflectArrow(s, a, r);
+    } else {
+      loseCrowd(s, arrowLoss(c.count, a.kills), a.tx, a.ty, 'arrow');
+    }
   }
   s.arrows.length = keep;
+}
+
+// Reflect: a blocked arrow flies back at its tower (through gates).
+function reflectArrow(s, a, r) {
+  const tw = s.enemies.find((e) => e.id === a.src && e.alive);
+  if (!tw) return;
+  const x0 = s.crowd.x, y0 = s.dist + r * 0.5;
+  const tx = (tw.x0 + tw.x1) / 2;
+  const dx = tx - x0, dy = tw.y - y0;
+  const d = Math.sqrt(dx * dx + dy * dy) || 1;
+  const b = bullet(x0, y0, (dx / d) * BULLET_SPEED, (dy / d) * BULLET_SPEED, s.ws.reflect, true, 1, 0, false);
+  b.reflect = true;
+  s.bullets.push(b);
+  emit(s, { type: 'reflect', x: x0, y: y0 });
 }
 
 // Moving gates: sliding rows follow slideOffset(); swapping rows rotate their
@@ -498,7 +616,8 @@ function updateBossAttacks(s, r) {
       const frac = chordOverlapFrac(c.x, r, a.x0, a.x1);
       const share = a.kind === 'boulder' ? BOSS_ATK.boulderHit : BOSS_ATK.stompHit;
       emit(s, { type: a.kind === 'boulder' ? 'boulderLand' : 'bossSlam', x: (a.x0 + a.x1) / 2, y: s.dist, hit: frac > 0 });
-      if (frac > 0) loseCrowd(s, Math.max(2, Math.ceil(c.count * frac * share)), c.x, s.dist, a.kind);
+      const guard = armedWeapon(s) === 'shield' ? WT.bossGuard : 1;
+      if (frac > 0) loseCrowd(s, Math.max(2, Math.ceil(c.count * frac * share * guard)), c.x, s.dist, a.kind);
     }
     if (s.t < a.tHit + 0.8) s.bossAtks[keep++] = a; // kept a moment for the animation
   }
@@ -508,14 +627,15 @@ function updateBossAttacks(s, r) {
 // Coins on the track: walk over them (+1 each). The magnet pulls nearby ones in.
 function updateCoins(s, r) {
   const c = s.crowd;
-  const magnet = s.buffs.magnet > 0;
+  // Pull radius: the magnet pickup, or the Coin magnet upgrade's (smaller).
+  const R = Math.max(s.buffs.magnet > 0 ? MAGNET_R : 0, s.ws.magnetR);
   for (const k of s.coinItems) {
     if (k.taken) continue;
     const dy = k.y - s.dist;
     if (dy > MAGNET_R + 5) break; // coins are sorted by y
     if (dy < -r - 10) continue;
     let dx = k.x - c.x;
-    if (magnet && dx * dx + dy * dy < MAGNET_R * MAGNET_R) {
+    if (R > 0 && dx * dx + dy * dy < R * R) {
       // Fly toward the crowd (pulled = drawn as flying).
       const d = Math.sqrt(dx * dx + dy * dy) || 1;
       const v = Math.min(d, 110 * DT);
@@ -542,6 +662,112 @@ function updateHints(s) {
   }
 }
 
+// ---- weapon modes --------------------------------------------------------
+// Switching: the requested weapon is selected at once and armed after
+// ws.switchTime. Switching never steers or squeezes.
+function updateWeapon(s, want, squeezeOn) {
+  const w = s.weapon, ws = s.ws;
+  if (want && want !== w.cur && WEAPONS.includes(want) && weaponUnlocked(s.level, want)) {
+    w.cur = want;
+    w.armT = ws.switchTime;
+    w.since = s.t;
+    w.boost = 0;
+    w.first = false;
+    emit(s, { type: 'weaponSwitch', w: want });
+  }
+  if (w.armT > 0) {
+    w.armT = Math.max(0, w.armT - DT);
+    if (w.armT === 0) {
+      w.first = true; // the first move after a switch is stronger
+      w.boost = ws.boostTime;
+      w.swingCd = 0;
+      emit(s, { type: 'weaponReady', w: w.cur, boost: ws.boostTime > 0 });
+    }
+  } else if (w.boost > 0) {
+    w.boost = Math.max(0, w.boost - DT);
+  }
+  if (w.fortT > 0) w.fortT = Math.max(0, w.fortT - DT);
+  if (w.fortCd > 0) w.fortCd = Math.max(0, w.fortCd - DT);
+  // Fortress: squeezing with the shield up makes the crowd immune to saws and
+  // arrows for a moment (then it needs to recharge).
+  if (squeezeOn && ws.fortress > 0 && w.fortCd <= 0 && armedWeapon(s) === 'shield') {
+    w.fortT = ws.fortressT;
+    w.fortCd = ws.fortressCd;
+    emit(s, { type: 'fortress', t: ws.fortressT });
+  }
+}
+
+// Melee: a slash when it is ready and something is in reach. It hits every
+// enemy in the arc (and the boss) for meleeDamage(crowd).
+const MELEE_SLACK = 8;
+function slashHits(s, e, r, reach, half, full) {
+  if (e.x !== undefined) return inArc(s.crowd.x, s.dist, r, reach, half, full, e.x, e.y, enemyRadius(e));
+  return rectInArc(s.crowd.x, s.dist, r, reach, half, full, e.x0, e.x1, e.y, WALL_HALF);
+}
+function updateMelee(s, r) {
+  const w = s.weapon, ws = s.ws, c = s.crowd;
+  if (w.bloodT > 0) { w.bloodT -= DT; if (w.bloodT <= 0) w.blood = 0; }
+  if (w.swingCd > 0) { w.swingCd -= DT; return; }
+  const whirl = ws.whirlEvery > 0 && (w.swingN + 1) % ws.whirlEvery === 0;
+  const reach = ws.reach * (w.first ? 2 : 1); // first slash after a switch lunges
+  const half = ws.arcHalf;
+  const far = r + reach + MELEE_SLACK + 6;
+  let any = false;
+  for (const e of s.enemies) {
+    if (!e.alive || Math.abs(e.y - s.dist) > far) continue;
+    if (slashHits(s, e, r, reach, half, whirl)) { any = true; break; }
+  }
+  const b = s.boss;
+  const bossIn = b.alive && b.y - b.r - s.dist <= r + reach;
+  if (!any && !bossIn) return; // stays ready
+  const dmg = meleeDamage(c.count);
+  let kills = 0, units = 0, hits = 0;
+  // (s.enemies.length is read each time: splitter halves this slash makes are hit too)
+  for (let i = 0; i < s.enemies.length; i++) {
+    const e = s.enemies[i];
+    if (!e.alive || Math.abs(e.y - s.dist) > far || !slashHits(s, e, r, reach, half, whirl)) continue;
+    hits += 1;
+    const big = e.kind === 'giant' || e.kind === 'wall';
+    const k = killEnemyUnits(s, e, Math.round(dmg * (big ? ws.bigHit : 1)));
+    if (e.kind === 'squad') units += k;
+    if (!e.alive) kills += 1;
+  }
+  if (bossIn) {
+    hits += 1;
+    b.hp = Math.max(0, b.hp - dmg * ws.slayer);
+    b.lastHit = s.t;
+    emit(s, { type: 'bossHit', x: c.x, y: b.y - b.r });
+  }
+  if (ws.recruit > 0) addCrowd(s, Math.floor(units * ws.recruit), 'recruit', c.x, s.dist + r);
+  if (kills > 0) { w.blood = Math.min(WT.bloodMax, w.blood + kills); w.bloodT = WT.bloodReset; } else w.blood = 0;
+  w.swingCd = (ws.meleeCd / (1 + ws.blood * w.blood)) * (w.boost > 0 ? WT.boostSwing : 1);
+  w.swingN += 1;
+  w.slash = { t: s.t, whirl, reach, half, lunge: w.first, x: c.x };
+  emit(s, { type: 'slash', x: c.x, y: s.dist + r, whirl, lunge: w.first, hits });
+  w.first = false;
+}
+
+// Bash (shield upgrade): shove the squad or giant about to hit the crowd back,
+// stun it and knock a few out.
+function updateBash(s, r) {
+  const w = s.weapon, ws = s.ws, c = s.crowd;
+  if (w.bashCd > 0) { w.bashCd -= DT; return; }
+  let best = null;
+  for (const e of s.enemies) {
+    if (!e.alive || e.x === undefined) continue;
+    const er = enemyRadius(e);
+    const dy = e.y - s.dist;
+    if (dy <= 0 || dy > r + er + 6 || Math.abs(e.x - c.x) >= r + er) continue;
+    if (!best || e.y < best.y) best = e;
+  }
+  if (!best) return;
+  best.y += WT.bashPush;
+  best.stun = ws.bashStun;
+  killEnemyUnits(s, best, Math.round(meleeDamage(c.count) * (0.15 + 0.1 * ws.bash)));
+  w.bashCd = ws.bashEvery;
+  emit(s, { type: 'bash', x: best.x, y: best.y });
+}
+
 export function step(s, input = {}) {
   if (s.phase !== 'run' && s.phase !== 'boss') return s;
   if (s.events.length > MAX_EVENTS) s.events.length = 0;
@@ -559,12 +785,16 @@ export function step(s, input = {}) {
 
   // --- squeeze (hold to pack the crowd tight)
   const packed = !!input.squeeze;
+  const squeezeOn = packed && !c.packed;
   if (packed !== c.packed) {
     c.packed = packed;
     emit(s, { type: 'squeeze', on: packed });
   }
   const sq = packed ? 1 : 0;
   c.squeeze += Math.max(-SQUEEZE_RATE * DT, Math.min(SQUEEZE_RATE * DT, sq - c.squeeze));
+
+  // --- weapon switching
+  updateWeapon(s, input.weapon, squeezeOn);
 
   // --- buffs
   for (const k in s.buffs) s.buffs[k] = Math.max(0, s.buffs[k] - DT);
@@ -602,7 +832,8 @@ export function step(s, input = {}) {
       if (!e.alive) continue;
       const round = e.kind === 'squad' || e.kind === 'giant';
       if (e.kind === 'squad' && !e.scaled && e.y - s.dist < SCALE_VIEW && s.level >= AMBUSH_FROM) scaleSquad(s, e);
-      if (round && e.y - s.dist < ENEMY_WAKE && e.y > s.dist
+      if (e.stun > 0) e.stun -= DT; // bashed: stands still for a moment
+      else if (round && e.y - s.dist < ENEMY_WAKE && e.y > s.dist
         && !segmentAt(s.segments, 'bridge', e.y - 1)) { // squads don't wade into the water
         e.y -= (e.kind === 'giant' ? GIANT_MARCH : ENEMY_MARCH) * DT;
       }
@@ -614,14 +845,26 @@ export function step(s, input = {}) {
       if (round) touch = circlesOverlap(c.x, s.dist, r, e.x, e.y, enemyRadius(e));
       else touch = circleRectOverlap(c.x, s.dist, r * 0.85, e.x0, e.y - WALL_HALF, e.x1, e.y + WALL_HALF);
       if (touch) {
-        const res = resolveContact(c.count, contactCost(e));
+        const cost = contactCost(e);
+        let price = cost, joined = 0;
+        if (armedWeapon(s) === 'shield') {
+          // The shield takes most of the clash; the first one after a switch is free.
+          price = s.weapon.first ? 0 : Math.ceil(cost * clashShare(s));
+          s.weapon.first = false;
+          emit(s, { type: 'shieldBlock', x: enemyX(e), y: e.y, n: cost - price });
+          if (e.kind === 'squad') joined = Math.floor((cost - price) * s.ws.rally); // Rally
+        }
+        const res = resolveContact(c.count, price);
         e.alive = false;
         loseCrowd(s, res.lost, round ? e.x : c.x, e.y, e.kind);
         emit(s, { type: 'kill', x: enemyX(e), y: e.y, n: res.lost, wall: !round, kind: e.kind, melee: true });
+        if (joined > 0 && c.count > 0) addCrowd(s, joined, 'rally', enemyX(e), e.y);
       } else if (round && e.y < s.dist - r - enemyRadius(e)) {
-        // Got past the crowd alive: it hits from behind, twice as hard.
+        // Got past the crowd alive: it hits from behind, twice as hard
+        // (a raised shield halves that too).
         e.alive = false;
-        const n = Math.min(c.count, ambushCost(s, e));
+        const amb = ambushCost(s, e);
+        const n = Math.min(c.count, armedWeapon(s) === 'shield' ? Math.ceil(amb * clashShare(s)) : amb);
         if (n > 0) {
           emit(s, { type: 'ambush', n, x: e.x, y: e.y, kind: e.kind });
           loseCrowd(s, n, e.x, s.dist, 'ambush');
@@ -651,7 +894,7 @@ export function step(s, input = {}) {
     const b = s.boss;
     const before = c.count;
     const f = bossTick({ crowd: c.count, bossHp: b.hp, lossAcc: b.lossAcc }, DT,
-      { soldierDps: SOLDIER_DPS, bossDps: b.dps, maxFighters: b.fighters });
+      { soldierDps: SOLDIER_DPS, bossDps: b.dps * (armedWeapon(s) === 'shield' ? WT.bossGuard : 1), maxFighters: b.fighters });
     b.hp = f.bossHp;
     b.lossAcc = f.lossAcc;
     if (f.crowd < before) loseCrowd(s, before - f.crowd, c.x, s.dist + r, 'boss');
@@ -661,25 +904,32 @@ export function step(s, input = {}) {
 
   updateArrows(s, crowdR(s));
 
-  // --- shooting
-  if (c.count > 0) {
+  // --- shooting (rifle, or the shield's slow fire), slashing, bashing
+  const arm = armedWeapon(s);
+  if (c.count > 0 && (arm === 'rifle' || arm === 'shield')) {
     const rate = fireRateOf(s);
     s.fireCd -= DT;
     while (s.fireCd <= 0) {
       fire(s);
       s.fireCd += 1 / rate;
     }
-    if (s.buffs.rocket > 0) {
-      s.rocketCd -= DT;
-      if (s.rocketCd <= 0) {
-        s.rocketCd += ROCKET_EVERY;
-        s.bullets.push({ x: c.x, y: s.dist + crowdR(s) * 0.5, vx: 0, vy: BULLET_SPEED * 0.75, dmg: s.stats.damage * ROCKET_DMG, rocket: true });
-        emit(s, { type: 'rocket' });
-      }
-    } else {
-      s.rocketCd = 0;
-    }
+  } else {
+    s.fireCd = Math.max(0, s.fireCd - DT); // fires as soon as a gun is armed
   }
+  if (c.count > 0 && arm === 'rifle' && s.buffs.rocket > 0) {
+    s.rocketCd -= DT;
+    if (s.rocketCd <= 0) {
+      s.rocketCd += ROCKET_EVERY;
+      const rk = bullet(c.x, s.dist + crowdR(s) * 0.5, 0, BULLET_SPEED * 0.75, s.stats.damage * ROCKET_DMG, false, 1, 0, false);
+      rk.rocket = true;
+      s.bullets.push(rk);
+      emit(s, { type: 'rocket' });
+    }
+  } else {
+    s.rocketCd = 0;
+  }
+  if (c.count > 0 && arm === 'melee') updateMelee(s, crowdR(s));
+  if (c.count > 0 && arm === 'shield' && s.ws.bash > 0) updateBash(s, crowdR(s));
   updateBullets(s);
 
   // --- end conditions
@@ -689,6 +939,11 @@ export function step(s, input = {}) {
     const reward = 15 + 5 * s.level + Math.floor(Math.min(c.count, 300) / 6);
     s.coins += reward;
     emit(s, { type: 'won', reward, x: s.boss.x, y: s.boss.y });
+  } else if (c.count <= 0 && s.weapon.lastStand) {
+    // Last stand: once a run, a wipeout leaves a few soldiers standing.
+    s.weapon.lastStand = false;
+    c.count = s.ws.lastStand;
+    emit(s, { type: 'lastStand', n: c.count, x: c.x, y: s.dist });
   } else if (c.count <= 0) {
     s.phase = 'lost';
     emit(s, { type: 'lost' });

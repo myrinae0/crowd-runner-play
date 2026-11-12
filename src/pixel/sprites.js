@@ -610,6 +610,78 @@ export function orbSprite(d, col, dark, icon) {
   return outline(sp);
 }
 
+// Melee slash: part of an elliptical ring (the arc in front of the crowd, seen
+// in perspective), `w` x `h` inside a 1 px outline. `half` is the half-angle
+// in degrees around straight ahead (up); full = a whole circle (whirlwind).
+// Frames 0-3: the sweep runs left to right with a white leading edge, then
+// the trail thins out.
+const SLASH_COLS = ['#ffffff', '#cdeefc', '#7fc8f0', '#3f8fd0'];
+export function slashSprite(w, h, frame = 0, half = 60, full = false) {
+  const sp = blank(w, h);
+  const rx = w / 2, ry = h / 2;
+  const t = Math.max(2, Math.round(Math.min(w, h * 2) / 14)) - (frame >= 3 ? 1 : 0);
+  const span = full ? 180 : half;
+  // How far (degrees, from -span) the sweep has got in this frame.
+  const front = -span + 2 * span * [0.55, 1, 1, 1][frame];
+  const fade = [0, 0, 0.35, 0.7][frame];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const nx = (x + 0.5 - rx) / rx, ny = (y + 0.5 - ry) / ry;
+    const o = nx * nx + ny * ny;
+    const ix = (x + 0.5 - rx) / Math.max(0.5, rx - t), iy = (y + 0.5 - ry) / Math.max(0.5, ry - t * 0.6);
+    if (o > 1 || ix * ix + iy * iy <= 1) continue;
+    const ang = (Math.atan2(nx, -ny) * 180) / Math.PI; // 0 = straight ahead
+    if (ang < -span || ang > front) continue;
+    const behind = (front - ang) / (2 * span); // 0 at the leading edge, 1 at the tail
+    if (behind < fade * 0.8) continue;
+    const k = behind < 0.08 ? 0 : behind < 0.35 ? 1 : behind < 0.7 ? 2 : 3;
+    put(sp, x, y, rgba(SLASH_COLS[Math.min(3, k + (frame >= 2 ? 1 : 0))]));
+  }
+  return outline(sp);
+}
+
+// Weapon icons for the HUD buttons (white, drawn on the button colour).
+export const WEAPON_ICONS = {
+  rifle: [
+    '..........',
+    '.........#',
+    '#########.',
+    '#########.',
+    '.##.###...',
+    '.##.......',
+    '.##.......',
+  ],
+  shield: [
+    '#######',
+    '#.....#',
+    '#.###.#',
+    '#.###.#',
+    '#..#..#',
+    '.#...#.',
+    '..#.#..',
+    '...#...',
+  ],
+  melee: [
+    '.......##',
+    '......###',
+    '.....###.',
+    '....###..',
+    '#..###...',
+    '.####....',
+    '..##.....',
+    '.#.#.....',
+    '#........',
+  ],
+  lock: [
+    '..###..',
+    '.#...#.',
+    '.#...#.',
+    '#######',
+    '###.###',
+    '###.###',
+    '#######',
+  ],
+};
+
 // Rounded, outlined panel with a highlight row: buttons, pills, hint boxes.
 export function panelSprite(w, h, fill, dark, light = null) {
   const sp = blank(w, h);

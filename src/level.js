@@ -6,6 +6,12 @@ import { BOSS_R, FEATURES, TOWER_W, SOLDIER_DPS, AMBUSH_FROM } from './config.js
 
 export const DEFAULT_SEED = 'chimaek';
 
+// Weapon moments in the mix (see generateLevel): fort walls and warbands.
+export const WEAPON_MIX_FROM = 5;
+export const FORT_HP = 3;        // fort walls: this times a normal wall's HP
+export const WARBAND_SIZE = 2.5; // warbands: this times a normal squad...
+export const WARBAND_SHARE = 1.6; // ...and scaled to this times the usual share of the crowd
+
 // Mechanics that take up their own stretch of road.
 export const SEGMENT_FEATURES = ['bridge', 'saws', 'archers', 'crushers', 'fork', 'giants'];
 
@@ -463,6 +469,27 @@ export function generateLevel(seed = DEFAULT_SEED, level = 1) {
   }
   coins.sort((a, b) => a.y - b.y);
   powerups.sort((a, b) => a.y - b.y);
+
+  // ---- weapon moments (from the melee level on): some walls become fort
+  // walls across the whole road (thick: a job for melee), and some lone
+  // squads become warbands (big, and they don't share their size with
+  // others in view: a job for the shield). Own random stream, so the rest of
+  // the layout is unchanged.
+  if (level >= WEAPON_MIX_FROM) {
+    const rng4 = createRng(hashSeed(seed, level, 'weapons'));
+    const k = level - WEAPON_MIX_FROM;
+    for (const e of enemies) {
+      if (e.kind === 'wall' && rng4.chance(Math.min(0.7, 0.45 + 0.03 * k))) {
+        e.x0 = 0; e.x1 = 100; e.fort = true;
+        e.hp = e.start = Math.round(e.hp * FORT_HP);
+      } else if (e.kind === 'squad' && !e.split && !e.shield && e.y > 300
+        && !enemies.some((o) => o !== e && o.kind === 'squad' && Math.abs(o.y - e.y) < 40)
+        && rng4.chance(Math.min(0.45, 0.25 + 0.02 * k))) {
+        e.warband = true;
+        e.count = e.start = Math.round(e.count * WARBAND_SIZE);
+      }
+    }
+  }
 
   // The ambush hint: at the first squad that isn't near another hint.
   if (level === AMBUSH_FROM) {

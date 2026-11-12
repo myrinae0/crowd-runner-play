@@ -45,6 +45,7 @@ const farFirst = (a, b) => b[0] - a[0];
 export const POWER_COLORS = {
   rapid: ['#ff9a1f', '#a85a00'], spread: ['#a35cff', '#5a22a8'], rocket: ['#ef4b3a', '#8a1c12'],
   laser: ['#16b8dc', '#0a5f78'], magnet: ['#e0409a', '#801850'],
+  boost: ['#38b860', '#145a2c'], fortress: ['#e09e12', '#7a4a00'],
 };
 const GATE_COLORS = {
   good: { fill: '#2f9bff', hi: '#9fe2ff', lo: '#1a56b0' },
@@ -463,17 +464,27 @@ export function createRenderer(canvas) {
     const n = Math.min(c.count, RENDER_CAP);
     const spread = 1 - SQUEEZE_SHRINK * c.squeeze;
     const r = crowdRadius(c.count) * spread;
-    if (c.squeeze > 0.05) {
+    const w8 = state.weapon;
+    const arm = w8 && w8.armT <= 0 ? w8.cur : null;
+    const fort = w8 && w8.fortT > 0;
+    if (c.squeeze > 0.05 || arm === 'shield') {
+      // Gold ring while packed; a blue rim while the shield is up.
       const a = proj(c.x - r - 1.5, 0), b = proj(c.x + r + 1.5, 0);
       const w = Math.max(8, R((b.x - a.x) / 2) * 2);
-      g.globalAlpha = Math.min(1, c.squeeze * 1.4);
-      gfx.blit(g, gfx.ring(w, Math.max(4, R(w * 0.3) * 2), '#ffd23f', 2), (a.x + b.x) / 2, a.y, true);
+      const gold = c.squeeze > 0.05 || fort;
+      g.globalAlpha = gold ? Math.min(1, Math.max(fort ? 1 : 0, c.squeeze * 1.4)) : 0.9;
+      gfx.blit(g, gfx.ring(w, Math.max(4, R(w * 0.3) * 2), gold ? '#ffd23f' : '#6fb0ff', 2), (a.x + b.x) / 2, a.y, true);
       g.globalAlpha = 1;
     }
+    if (arm === 'shield') feat.drawShieldWall(state, r, fort);
     drawPack('blue', CROWD_PACK, n, c.x, 0, state.t, state.phase === 'run' || state.phase === 'boss', spread);
+    if (arm === 'melee') feat.drawGlints(state, CROWD_PACK, n, spread);
     if (state.phase === 'boss' || state.phase === 'won') {
       const bot = proj(c.x, -r * 0.8 - 1);
-      pill(bot.x, Math.min(v.M + LH - 10, bot.y + 9), String(c.count), '#2f7cf6', '#0e3a8c');
+      let py = Math.min(v.M + LH - 10, bot.y + 9);
+      // Kept clear of the weapon buttons (bottom left).
+      if (curBar && bot.x - 16 < curBar.right) py = Math.min(py, curBar.top - 8);
+      pill(bot.x, py, String(c.count), '#2f7cf6', '#0e3a8c');
     } else {
       const top = proj(c.x, r * 0.85 + 1);
       pill(top.x, top.y - 22, String(c.count), '#2f7cf6', '#0e3a8c');
@@ -506,6 +517,7 @@ export function createRenderer(canvas) {
 
   // ---- HUD (screen space, not shaken) --------------------------------------------------
   let padGeom = null;
+  let curBar = null; // this frame's weapon bar in art px (see barTop)
   function drawPad(state) {
     const Ra = Math.max(14, R((36 * dpr) / S));
     const x = V.sx0 + LW - Ra - 8, y = V.sy0 + LH - Ra - 13;
@@ -520,6 +532,13 @@ export function createRenderer(canvas) {
     const ink = on ? OUT : '#ffffff';
     g.drawImage(gfx.icon('squeeze', ink), x - 5, y - 7);
     gfx.text(g, on ? 'PACKED' : 'SQUEEZE', x, y + 4, ink, { font: 'small', outline: on ? '#ffd23f' : OUT });
+  }
+
+  // The weapon bar (DOM buttons, bottom left) in art pixels: chevrons that
+  // would sit under it are lifted above it. hud.bar = { right, top } in CSS px.
+  function barTop(hud) {
+    if (!hud.bar) return null;
+    return { right: V.sx0 + ((hud.bar.right * dpr - ox) / S), top: V.sy0 + (hud.bar.top * dpr) / S };
   }
 
   function hitPad(x, y) {
@@ -554,6 +573,10 @@ export function createRenderer(canvas) {
     for (const [k, label] of [['rapid', 'RAPID'], ['spread', 'SPREAD'], ['rocket', 'ROCKET'], ['laser', 'LASER'], ['magnet', 'MAGNET']]) {
       if (state.buffs[k] > 0) list.push([k, `${label} ${state.buffs[k].toFixed(1)}`]);
     }
+    // Weapon timers: Quick draw's boost and Fortress.
+    const w8 = state.weapon;
+    if (w8 && w8.boost > 0) list.push(['boost', `BOOST ${w8.boost.toFixed(1)}`]);
+    if (w8 && w8.fortT > 0) list.push(['fortress', `FORTRESS ${w8.fortT.toFixed(1)}`]);
     if (list.length) {
       const widths = list.map(([, t]) => gfx.textCanvas(t, '#fff', OUT, 'small', 1).width + 4);
       let bx = R(mid - (widths.reduce((a, b) => a + b, 0) + 3 * (list.length - 1)) / 2);
@@ -589,6 +612,7 @@ export function createRenderer(canvas) {
       return;
     }
     scen = sceneryFor(state);
+    curBar = hud.hidden ? null : barTop(hud);
     drawGround(state);
 
     // Painter's order: far to near. Only what's in view, in reused slots, so a
@@ -636,13 +660,14 @@ export function createRenderer(canvas) {
     drawBullets(state);
     feat.drawMagnetField(state);
     drawCrowd(state);
+    feat.drawSlash(state);
     feat.drawBoulders(state);
     feat.drawArrows(state);
     drawFx(state, fx);
     if (hud.hidden) padGeom = null;
     if (!hud.hidden) {
       feat.drawAmbushFlash(fx);
-      feat.drawAmbushWarnings(state);
+      feat.drawAmbushWarnings(state, barTop(hud));
       drawHud(state, hud);
       feat.drawHint(fx);
     }
@@ -654,6 +679,7 @@ export function createRenderer(canvas) {
   function prepare(state) {
     const sc = sceneryFor(state);
     if (assetsReady) gfx.floorFor(sc.theme.name);
+    if (assetsReady && v) feat.warmSlash(state);
   }
 
   resize();

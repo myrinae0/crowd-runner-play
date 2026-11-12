@@ -198,6 +198,60 @@ export const RECIPES = {
     ],
   },
 
+  // ---- weapon modes ----
+  // Switching: a click-clack as the new weapon comes out, a bright ping when it is armed.
+  weaponSwitch: {
+    prio: 2, gap: 120, layers: [
+      { w: 'square', arp: [330, 494], step: 0.035, dur: 0.08, v: 0.07 },
+      { w: 'noise', dur: 0.04, v: 0.07, filt: { t: 'bandpass', f: 2200, q: 2 } },
+    ],
+  },
+  weaponReady: { prio: 2, gap: 150, layers: [{ w: 'pulse25', arp: [784, 1175], step: 0.05, dur: 0.13, v: 0.09, hold: true }] },
+  // Melee: a noise swoosh sweeping up, with a falling blade edge.
+  slash: {
+    prio: 1, gap: 90, jit: 0.05, layers: [
+      { w: 'noise', dur: 0.14, v: 0.17, a: 0.015, filt: { t: 'bandpass', f: [700, 4200], q: 1.4 } },
+      { w: 'sawtooth', f: [1100, 380], dur: 0.08, v: 0.045, filt: { t: 'lowpass', f: 3000 } },
+    ],
+  },
+  // Whirlwind: a longer swoosh that rises and falls with a spinning wobble.
+  whirl: {
+    prio: 2, gap: 150, layers: [
+      { w: 'noise', dur: 0.32, v: 0.2, a: 0.03, filt: { t: 'bandpass', f: [500, 3600], q: 1.2 } },
+      { w: 'square', f: [260, 520], vib: [18, 0.08], dur: 0.28, v: 0.05 },
+    ],
+  },
+  // Shield: a metal clang (clashes and blocked arrows).
+  shieldBlock: {
+    prio: 1, gap: 90, jit: 0.04, layers: [
+      { w: 'triangle', f: [2300, 2050], dur: 0.12, v: 0.09 },
+      { w: 'square', f: [620, 560], dur: 0.05, v: 0.06 },
+      { w: 'noise', dur: 0.04, v: 0.07, filt: { t: 'highpass', f: 3500 } },
+    ],
+  },
+  bash: {
+    prio: 1, gap: 150, layers: [
+      { w: 'triangle', f: [150, 55], dur: 0.16, v: 0.22 },
+      { w: 'noise', dur: 0.1, v: 0.12, filt: { t: 'lowpass', f: [1400, 200] } },
+    ],
+  },
+  reflect: { prio: 1, gap: 110, layers: [{ w: 'triangle', f: [700, 2100], dur: 0.1, v: 0.08 }] },
+  ricochet: { prio: 0, gap: 90, jit: 0.08, layers: [{ w: 'triangle', f: [1900, 2800], dur: 0.06, v: 0.05 }] },
+  // Soldiers joining (Rally, Recruit): a little rising fanfare.
+  join: { prio: 1, gap: 200, layers: [{ w: 'pulse25', arp: [523, 659, 784], step: 0.04, dur: 0.14, v: 0.08, hold: true }] },
+  fortress: {
+    prio: 2, gap: 400, layers: [
+      { w: 'square', arp: [392, 523, 659, 784], step: 0.05, dur: 0.24, v: 0.08, hold: true },
+      { w: 'triangle', f: [196, 392], dur: 0.3, v: 0.12 },
+    ],
+  },
+  lastStand: {
+    prio: 3, gap: 1000, layers: [
+      { w: 'square', arp: [220, 330, 440, 659], step: 0.08, dur: 0.42, v: 0.1, hold: true },
+      { w: 'sawtooth', f: [110, 220], dur: 0.4, v: 0.08, filt: { t: 'lowpass', f: 1500 } },
+    ],
+  },
+
   // ---- pickups and UI ----
   coin: { prio: 0, gap: 45, layers: [{ w: 'pulse25', arp: [988, 1319], step: 0.05, dur: 0.14, v: 0.063, hold: true }] },
   powerup: {
@@ -273,6 +327,16 @@ export function soundFor(e) {
     case 'powerup': return 'powerup';
     case 'hint': return 'hint';
     case 'squeeze': return e.on ? 'squeezeOn' : 'squeezeOff';
+    case 'weaponSwitch': return 'weaponSwitch';
+    case 'weaponReady': return 'weaponReady';
+    case 'slash': return e.whirl ? 'whirl' : 'slash';
+    case 'shieldBlock': return 'shieldBlock';
+    case 'bash': return 'bash';
+    case 'reflect': return 'reflect';
+    case 'ricochet': return 'ricochet';
+    case 'join': return 'join';
+    case 'fortress': return 'fortress';
+    case 'lastStand': return 'lastStand';
     case 'won': return 'win';
     case 'lost': return 'lose';
     default: return null;

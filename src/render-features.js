@@ -12,6 +12,10 @@ import { wrapText } from './pixel/font.js';
 import { OUT } from './pixel/palette.js';
 
 const SAW_SIZES = [7, 9, 11, 13, 15, 17, 19, 22];
+// Slash arc widths (pre-drawn) and the height ratios they come in.
+export const SLASH_W = [16, 20, 24, 30, 36, 44, 52, 62, 74, 88, 104, 124];
+export const SLASH_RATIOS = [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6];
+export const SLASH_HALVES = [55, 65, 75, 85, 95];
 const BOULDER_SIZES = [5, 7, 9, 11, 13, 15, 17];
 
 export function createFeatureDrawer(V) {
@@ -348,7 +352,15 @@ export function createFeatureDrawer(V) {
       if (d > V.VIEW) continue;
       const q = proj(b.x, d);
       const lift = 3 * V.ppu * q.s;
-      if (b.laser) {
+      if (b.reflect) {
+        // A blocked arrow flying back at its tower: white shaft, blue head.
+        const t = proj(b.x - (b.vx / 120) * 4, d - (b.vy / 120) * 4);
+        const x0 = R(q.x), y0 = R(q.y - lift), x1 = R(t.x), y1 = R(t.y - lift);
+        const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+        g.fillStyle = '#ffffff';
+        for (let i = 0; i <= n; i++) g.fillRect(R(x0 + ((x1 - x0) * i) / n), R(y0 + ((y1 - y0) * i) / n), 1, 1);
+        box(x0 - 1, y0 - 1, 2, 2, '#6fb0ff');
+      } else if (b.laser) {
         const t = proj(b.x, d + 7);
         const y1 = R(t.y - lift), y0 = R(q.y - lift);
         g.globalAlpha = 0.5;
@@ -384,8 +396,93 @@ export function createFeatureDrawer(V) {
     g.globalAlpha = 1;
   }
 
+  // ---- weapon modes on the crowd ------------------------------------------------------------
+  // Shield: a row of raised shields along the crowd's front (behind the front
+  // soldiers, tall enough to show over their heads). Gold while Fortress is on.
+  function drawShieldWall(state, r, fort) {
+    const c = state.crowd;
+    const g = G();
+    const front = r * 0.72 + 1;
+    const l = proj(c.x - r * 0.85, front), rr = proj(c.x + r * 0.85, front);
+    const x0 = R(l.x), w = Math.max(6, R(rr.x) - x0);
+    const h = Math.max(5, R(6.5 * V.ppu * l.s));
+    const n = Math.max(2, Math.round(w / 6));
+    const pw = w / n;
+    const fill = fort ? '#ffd23f' : '#5a8fd8', hi = fort ? '#fff3a6' : '#c0dcff', dk = fort ? '#a06c00' : '#2a4a8c';
+    const y = R(l.y) - h - 3;
+    for (let i = 0; i < n; i++) {
+      const px = R(x0 + i * pw), pw2 = Math.max(2, R(x0 + (i + 1) * pw) - px - 1);
+      const bow = R(Math.sin(((i + 0.5) / n) * Math.PI) * 1.5);
+      box(px, y - bow, pw2, h, fill);
+      rect(px, y - bow, pw2, 1, hi);
+      rect(px, y - bow + h - 1, pw2, 1, dk);
+      if (pw2 >= 3 && h >= 5) rect(px + R(pw2 / 2), y - bow + R(h / 2) - 1, 1, 2, dk);
+    }
+  }
+
+  // Melee: a few blades glinting over the front soldiers.
+  function drawGlints(state, pack, n, spread) {
+    const c = state.crowd;
+    const g = G();
+    let k = 0;
+    for (const p of pack) {
+      if (p.i >= n || p.i % 5 !== 0) continue;
+      if (((Math.floor(state.t * 7) + k) % 4) === 0) {
+        const q = proj(c.x + p.ox * spread, p.oy * spread);
+        const y = R(q.y - 9 * q.s * (V.ppu / 1.6)) - 2, x = R(q.x) + 2;
+        rect(x, y - 2, 1, 4, '#ffffff');
+        rect(x - 1, y, 3, 1, '#cdeefc');
+      }
+      if (++k >= 6) break;
+    }
+    g.globalAlpha = 1;
+  }
+
+  // The slash arc: a sweep in front of the crowd (a whole ring for a whirlwind).
+  function drawSlash(state) {
+    const w8 = state.weapon;
+    const sl = w8 && w8.slash;
+    if (!sl) return;
+    const age = state.t - sl.t;
+    if (age < 0 || age >= 0.2) return;
+    const c = state.crowd;
+    const R0 = crowdRadius(c.count) * (1 - SQUEEZE_SHRINK * c.squeeze) + sl.reach;
+    const f = proj(c.x, R0), b = proj(c.x, sl.whirl ? -R0 : 0), l = proj(c.x - R0, 0), r = proj(c.x + R0, 0);
+    const want = r.x - l.x;
+    const w = pickSize(SLASH_W, want);
+    // A forward arc only needs the front half of the ellipse: its box is the
+    // full ellipse, centred on the crowd.
+    const fullH = sl.whirl ? b.y - f.y : (b.y - f.y) * 2;
+    const ratio = SLASH_RATIOS.reduce((a, x) => (Math.abs(x - fullH / want) < Math.abs(a - fullH / want) ? x : a));
+    const h = Math.max(6, R((w * ratio) / 2) * 2);
+    const half = SLASH_HALVES.reduce((a, x) => (Math.abs(x - (sl.half * 180) / Math.PI) < Math.abs(a - (sl.half * 180) / Math.PI) ? x : a));
+    const frame = Math.min(3, Math.floor(age / 0.05));
+    const spr = gfx.slash(w, h, frame, half, !!sl.whirl);
+    const cy = sl.whirl ? (f.y + b.y) / 2 : b.y;
+    gfx.blit(G(), spr, (l.x + r.x) / 2, cy, true);
+  }
+
+  // Builds the slash sprites a run will use (between rounds, so the first
+  // slash doesn't pay for them): every width at this screen's ratio.
+  function warmSlash(state) {
+    if (!state.ws || state.level < 5) return;
+    const R0 = 20;
+    const f = proj(50, R0), b = proj(50, 0), l = proj(50 - R0, 0), r = proj(50 + R0, 0);
+    const ratio0 = ((b.y - f.y) * 2) / (r.x - l.x);
+    const ratio = SLASH_RATIOS.reduce((a, x) => (Math.abs(x - ratio0) < Math.abs(a - ratio0) ? x : a));
+    const deg = (state.ws.arcHalf * 180) / Math.PI;
+    const half = SLASH_HALVES.reduce((a, x) => (Math.abs(x - deg) < Math.abs(a - deg) ? x : a));
+    for (const w of SLASH_W) {
+      const h = Math.max(6, R((w * ratio) / 2) * 2);
+      for (let fr = 0; fr < 4; fr++) {
+        gfx.slash(w, h, fr, half, false);
+        if (state.ws.whirlEvery) gfx.slash(w, Math.max(6, R((w * ratio) / 4) * 2), fr, half, true);
+      }
+    }
+  }
+
   // ---- v3 ambush: warning chevrons and the red edge glow ----------------------------------
-  function drawAmbushWarnings(state) {
+  function drawAmbushWarnings(state, bar = null) {
     if (state.level < AMBUSH_FROM || state.phase !== 'run') return;
     const c = state.crowd;
     const r = crowdRadius(c.count) * (1 - SQUEEZE_SHRINK * c.squeeze);
@@ -398,7 +495,8 @@ export function createFeatureDrawer(V) {
       const er = e.kind === 'giant' ? 6 : squadRadius(e.count);
       if (Math.abs(e.x - c.x) < r + er * 0.6) continue;
       const x = Math.max(V.sx0 + 9, Math.min(V.sx0 + V.LW - 9, proj(e.x, 0).x));
-      const y = V.sy0 + V.LH - 3;
+      // Lifted above the weapon buttons where they would sit under them.
+      const y = bar && x - 7 < bar.right ? Math.min(V.sy0 + V.LH - 3, bar.top - 3) : V.sy0 + V.LH - 3;
       g.globalAlpha = on ? 1 : 0.55;
       gfx.spr(g, 'icon-chevron', x, y - 7);
       gfx.spr(g, 'icon-chevron', x, y);
@@ -448,7 +546,7 @@ export function createFeatureDrawer(V) {
   }
 
   return {
-    floorMarks, drawAmbushWarnings, drawAmbushFlash, drawCoin, drawSpecialShots, drawMagnetField, drawGiant, drawShield,
+    floorMarks, drawAmbushWarnings, drawShieldWall, drawGlints, drawSlash, warmSlash, drawAmbushFlash, drawCoin, drawSpecialShots, drawMagnetField, drawGiant, drawShield,
     drawWall, drawTelegraphMarks, drawBoulders, drawHazard, drawHint, drawForkStart, drawTower, drawArrowMarks, drawArrows,
   };
 }

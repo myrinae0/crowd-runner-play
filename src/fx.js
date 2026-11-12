@@ -11,6 +11,7 @@ const POWER_TEXT = {
   laser: ['LASER! Shoots through gates', '#8ff0ff'],
   magnet: ['MAGNET!', '#ff9ad5'],
 };
+const WEAPON_TEXT = { rifle: ['RIFLE', '#ffe066'], shield: ['SHIELD', '#c0dcff'], melee: ['MELEE', '#ffb3a8'] };
 // Losses that drip in over time (hazards); their "−N" texts are merged.
 const DRAINS = new Set(['saw', 'crusher', 'fall']);
 
@@ -149,6 +150,50 @@ export function createFx() {
           break;
         case 'bossHit':
           if (Math.random() < 0.5) burst(e.x, e.y, 1, '#ffd0c8', 14, 1);
+          break;
+        case 'weaponSwitch':
+          burst(state.crowd.x, state.dist + 3, 6, '#ffffff', 12, 0.7);
+          break;
+        case 'weaponReady': {
+          const [label, col] = WEAPON_TEXT[e.w] || ['', '#fff'];
+          text(e.boost ? `${label} BOOST!` : label, state.crowd.x, state.dist + 8, col, 22, 0.8);
+          break;
+        }
+        case 'slash':
+          if (e.hits) {
+            burst(e.x, e.y + 4, e.whirl ? 14 : 8, '#e8f6ff', e.whirl ? 30 : 22, 1);
+            fx.shake = Math.max(fx.shake, e.whirl ? 4 : 2);
+          }
+          if (e.whirl) text('WHIRLWIND!', e.x, e.y + 6, '#cdeefc', 22, 0.7);
+          else if (e.lunge && e.hits) text('LUNGE!', e.x, e.y + 6, '#cdeefc', 20, 0.6);
+          break;
+        case 'shieldBlock':
+          burst(e.x, e.y, e.arrow ? 6 : 10, '#c0dcff', 18, 0.9);
+          if (e.arrow) text('BLOCK', e.x, e.y + 2, '#c0dcff', 18, 0.6);
+          else if (e.n > 0) text(`BLOCKED ${e.n}`, e.x, e.y + 2, '#c0dcff', 18, 0.7);
+          break;
+        case 'bash':
+          text('BASH!', e.x, e.y, '#ffe066', 20, 0.6);
+          burst(e.x, e.y, 10, '#ffe066', 24, 1);
+          fx.shake = Math.max(fx.shake, 4);
+          break;
+        case 'reflect':
+          burst(e.x, e.y, 4, '#6fb0ff', 14, 0.8);
+          break;
+        case 'ricochet':
+          burst(e.x, e.y, 3, '#ffffff', 16, 0.6);
+          break;
+        case 'join':
+          text(`${e.via === 'rally' ? 'RALLY' : 'RECRUIT'} +${e.n}`, state.crowd.x, state.dist + 6, '#7fdcff', 22, 0.9);
+          burst(e.x ?? state.crowd.x, e.y ?? state.dist, 8, COLORS.crowd, 18, 1);
+          break;
+        case 'fortress':
+          screenText('FORTRESS!', '#ffd23f', 30, 0.36, 1.0);
+          break;
+        case 'lastStand':
+          screenText('LAST STAND!', '#ff6b6b', 36, 0.4, 1.6);
+          fx.shake = Math.max(fx.shake, 10);
+          fx.flash = 0.6;
           break;
         case 'won':
           burst(e.x, e.y, 40, COLORS.enemy, 40, 1.8);

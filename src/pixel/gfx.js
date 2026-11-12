@@ -4,7 +4,7 @@
 // native size (or a whole-number scale), so nothing is ever smoothed.
 
 import { SHEETS, KENNEY, FLOOR_TILES, COMPOSITES, buildAtlasImage, composeImage } from './atlas.js';
-import { staticSprites, bossSprite, sawSprite, boulderSprite, ringSprite, ellipseSprite, orbSprite, panelSprite, ICONS, raster, windmillSprite, towerSprite, castleSprite } from './sprites.js';
+import { staticSprites, bossSprite, sawSprite, boulderSprite, ringSprite, ellipseSprite, orbSprite, panelSprite, slashSprite, ICONS, raster, windmillSprite, towerSprite, castleSprite } from './sprites.js';
 import { buildPatchTextures, THEMES } from './scenery.js';
 import { textMask } from './font.js';
 import { buildFloorTextures } from './floor.js';
@@ -168,6 +168,7 @@ export function createGfx() {
   const panel = (w, h, fill, dark, light) => proc(`pan${w}|${h}|${fill}|${dark}|${light}`, () => panelSprite(w, h, fill, dark, light));
   const landmark = (kind, h, frame, haze) => proc(`lm${kind}|${h}|${frame}|${haze}`, () => (
     kind === 'windmill' ? windmillSprite(h, frame, haze) : kind === 'castle' ? castleSprite(h, haze) : towerSprite(h, frame ? 'blue' : 'red', haze)));
+  const slash = (w, h, fr, half, full) => proc(`sl${w}|${h}|${fr}|${half}|${full}`, () => slashSprite(w, h, fr, half, full));
   const icon = (name, fill) => proc(`ico${name}|${fill}`, () => raster(ICONS[name], 'blue', fill));
 
   // Text as a cached canvas: fill colour, outline colour, font, whole scale.
@@ -194,7 +195,7 @@ export function createGfx() {
   }
 
   return {
-    ready, spr, kspr, cspr, frame, blit, text, textCanvas, boss, saw, boulder, ring, ellipse, orb, panel, icon, landmark, floorFor,
+    ready, spr, kspr, cspr, frame, blit, text, textCanvas, boss, saw, boulder, ring, ellipse, orb, panel, slash, icon, landmark, floorFor,
     get floor() { return floorTex; },
     get patches() { return patchTex; },
     get atlas() { return atlas; },

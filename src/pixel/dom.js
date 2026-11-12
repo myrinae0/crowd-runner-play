@@ -4,10 +4,10 @@
 // so it remains easy to read. The original text goes into aria-label.
 
 import { textMask } from './font.js';
-import { raster, ICONS } from './sprites.js';
+import { raster, outline, ICONS, WEAPON_ICONS } from './sprites.js';
 import { OUT, rgba } from './palette.js';
 
-const SELECTOR = '.logo span, .logo .l1, h2, .big, .ghost, .stats b, .shop-head > span:first-child, .shop-name, .shop-name small, .buy, .coins, .vol-val';
+const SELECTOR = '.logo span, .logo .l1, h2, .big, .ghost, .stats b, .shop-head > span:first-child, .shop-name, .shop-name small, .buy, .coins, .vol-val, .shop-tab, .wkey';
 
 function cssColor(el) {
   const m = getComputedStyle(el).color.match(/\d+(\.\d+)?/g) || ['255', '255', '255'];
@@ -52,14 +52,25 @@ export function pixelize(root = document) {
   }
 }
 
-// The pixel coin as a data URL for CSS (var(--px-coin)).
-export function installCssSprites() {
-  const sp = raster(ICONS.coin);
+function spriteUrl(sp) {
   const c = document.createElement('canvas');
   c.width = sp.w; c.height = sp.h;
   const g = c.getContext('2d');
   const id = g.createImageData(sp.w, sp.h);
   id.data.set(sp.rgba);
   g.putImageData(id, 0, 0);
-  document.documentElement.style.setProperty('--px-coin', `url(${c.toDataURL()})`);
+  return `url(${c.toDataURL()})`;
+}
+
+// The pixel coin and the weapon icons as data URLs for CSS (var(--px-coin),
+// --px-rifle, --px-shield, --px-melee, --px-lock).
+export function installCssSprites() {
+  const root = document.documentElement.style;
+  root.setProperty('--px-coin', spriteUrl(raster(ICONS.coin)));
+  // Each icon centred in a 10 x 10 box and outlined: 12 x 12, shown at 3x.
+  for (const [k, rows] of Object.entries(WEAPON_ICONS)) {
+    const w = rows[0].length, h = rows.length, ox = Math.floor((10 - w) / 2), oy = Math.floor((10 - h) / 2);
+    const pad = Array.from({ length: 10 }, (_, y) => (y >= oy && y < oy + h ? '.'.repeat(ox) + rows[y - oy] + '.'.repeat(10 - ox - w) : '.'.repeat(10)));
+    root.setProperty(`--px-${k}`, spriteUrl(outline(raster(pad, null, '#ffffff'))));
+  }
 }
