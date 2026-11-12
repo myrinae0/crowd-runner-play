@@ -59,6 +59,12 @@ const renderer = createRenderer(canvas);
 const fx = createFx();
 const audio = createAudio();
 audio.setMuted(save.muted);
+audio.setMusic(save.music);
+// Browsers start audio only from a user gesture: unlock on the first tap or key
+// (pointerup / touchend count as a gesture on phones, pointerdown doesn't).
+for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) {
+  window.addEventListener(ev, () => audio.unlock(), { capture: true, passive: true });
+}
 const input = createInput(canvas, () => renderer.size.ppu, (x, y) => mode === 'play' && renderer.hitPad(x, y));
 
 let mode = 'menu'; // menu | play | paused | end
@@ -182,6 +188,7 @@ function bank() {
 function showScreen(id) {
   for (const el of document.querySelectorAll('.screen')) el.classList.toggle('hidden', el.id !== id);
   $('pauseBtn').classList.toggle('hidden', id !== null || DEMO);
+  $('muteBtn').classList.toggle('hidden', id !== null || DEMO);
 }
 
 function renderShop(container) {
@@ -229,6 +236,14 @@ function refreshScreens() {
     el.textContent = audio.muted ? 'Sound: off' : 'Sound: on';
     el.setAttribute('aria-pressed', String(!audio.muted));
   }
+  for (const el of document.querySelectorAll('.music-toggle')) {
+    el.textContent = audio.music ? 'Music: on' : 'Music: off';
+    el.setAttribute('aria-pressed', String(audio.music));
+  }
+  const silent = audio.muted && !audio.music;
+  $('muteBtn').classList.toggle('off', silent);
+  $('muteBtn').setAttribute('aria-pressed', String(silent));
+  $('muteBtn').setAttribute('aria-label', silent ? 'Turn sound and music on' : 'Mute sound and music');
   pixelize(); // titles, buttons and numbers in the bitmap font
 }
 
@@ -260,11 +275,35 @@ function resume() {
   showScreen(null);
 }
 
-function toggleSound() {
-  audio.setMuted(!audio.muted);
-  save.muted = audio.muted;
+function setSound(sfx, music) {
+  audio.setMuted(!sfx);
+  audio.setMusic(music);
+  audio.unlock(); // these run from a tap, so the context may start here
+  save.muted = !sfx;
+  save.music = music;
   persist();
   refreshScreens();
+}
+const toggleSound = () => setSound(audio.muted, audio.music);
+const toggleMusic = () => setSound(!audio.muted, !audio.music);
+// HUD button: mutes both; the next tap brings back what was on before.
+let beforeMute = null;
+function toggleAll() {
+  if (!audio.muted || audio.music) {
+    beforeMute = { sfx: !audio.muted, music: audio.music };
+    setSound(false, false);
+  } else {
+    const b = beforeMute || { sfx: true, music: true };
+    beforeMute = null;
+    setSound(b.sfx, b.music);
+  }
+}
+
+// Which music fits what is on screen (cheap; called every frame).
+function musicScene() {
+  if (mode === 'paused') return 'paused';
+  if (mode === 'play' && state) return state.phase === 'boss' ? 'boss' : state.phase === 'run' ? 'run' : null;
+  return 'menu';
 }
 
 $('start-go').addEventListener('click', startLevel);
@@ -274,7 +313,11 @@ $('pauseBtn').addEventListener('click', pause);
 $('pause-resume').addEventListener('click', resume);
 $('pause-quit').addEventListener('click', () => { mode = 'menu'; refreshScreens(); showScreen('screen-start'); prepareNext(); });
 for (const el of document.querySelectorAll('.sound-toggle')) el.addEventListener('click', toggleSound);
-document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+for (const el of document.querySelectorAll('.music-toggle')) el.addEventListener('click', toggleMusic);
+$('muteBtn').addEventListener('click', toggleAll);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { pause(); audio.sleep(); } else audio.wake();
+});
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' || e.code === 'KeyP') { if (mode === 'play') pause(); else if (mode === 'paused') resume(); }
   if ((e.code === 'Enter' || e.code === 'Space') && (mode === 'menu' || mode === 'end')) { e.preventDefault(); startLevel(); }
@@ -346,6 +389,7 @@ function frame(now) {
     audio.play(state.events);
     state.events.length = 0;
   }
+  audio.setScene(musicScene());
   fx.update(mode === 'paused' ? 0 : dt);
   if (pf) { const t = performance.now(); pf.fx = t - pt; pt = t; }
   drawNow();
@@ -382,6 +426,7 @@ window.crowdRunner = {
   get state() { return state; },
   get mode() { return mode; },
   get save() { return save; },
+  audio,
   // Average ms per frame over n frames, split into sim / fx / draw. Advances the game.
   bench(n = 120) {
     const ms = { sim: 0, fx: 0, draw: 0 };

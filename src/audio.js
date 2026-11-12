@@ -1,88 +1,356 @@
-// Tiny WebAudio blips. Muted by default; the context is created on the first
-// unmuted user gesture (browsers require that).
+// Retro sound effects and chiptune music, synthesized with WebAudio at runtime
+// (no audio files). Sound effects and music have separate switches. Browsers
+// only allow audio after a user gesture, so the AudioContext is created by
+// unlock(), which main.js calls on the first tap or key. Without WebAudio
+// every call is a harmless no-op.
+//
+// Graph: sfx bus ─┐
+//                 ├─ master gain ─ compressor (limiter) ─ speakers
+//      music bus ─┘
+//
+// The recipes and the rules (event -> sound, rate limits, voice cap, music
+// patterns and sequencer) are pure and live in sfx.js and music.js.
 
-export function createAudio() {
-  let ctx = null;
-  let muted = true;
-  let lastShot = 0;
-  let lastKill = 0;
-  let lastCoin = 0;
+import { RECIPES, soundFor, createLimiter, createVoicePool, recipeDur, freqCurve, pulseTerms } from './sfx.js';
+import { createSequencer, midiToHz } from './music.js';
 
-  function ensure() {
-    if (ctx || muted) return ctx;
+export const MAX_VOICES = 10;          // sound effects playing at once
+export const MAX_STARTS_PER_FRAME = 5; // low-priority sounds started per play() call
+export const SFX_VOL = 0.9;
+export const MUSIC_VOL = 0.5;          // music sits under the effects
+export const MASTER_VOL = 1.0;
+const SILENT = 0.0001;
+
+// Builds the noise buffer and pulse waves once for a context, and plays
+// recipes and music notes into a destination node. Used by the engine and by
+// the offline render check.
+export function createSynth(ctx) {
+  const rate = ctx.sampleRate || 44100;
+  const noise = ctx.createBuffer(1, rate, rate);
+  const data = noise.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+  const waves = {};
+  for (const [name, duty] of [['pulse25', 0.25], ['pulse12', 0.125]]) {
     try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (AC) ctx = new AC();
+      const { real, imag } = pulseTerms(duty);
+      waves[name] = ctx.createPeriodicWave(real, imag);
+    } catch {
+      waves[name] = null;
+    }
+  }
+  const curves = new Map(); // frequency curves per recipe layer, built once
+
+  function source(w, t0) {
+    if (w === 'noise') {
+      const s = ctx.createBufferSource();
+      s.buffer = noise;
+      s.loop = true;
+      s.start(t0, Math.random() * 0.9);
+      return s;
+    }
+    const o = ctx.createOscillator();
+    if (w === 'pulse25' || w === 'pulse12') {
+      if (waves[w]) o.setPeriodicWave(waves[w]);
+      else o.type = 'square';
+    } else {
+      o.type = w;
+    }
+    o.start(t0);
+    return o;
+  }
+
+  function envelope(param, t0, l) {
+    const a = l.a || 0.002;
+    const end = t0 + l.dur;
+    param.setValueAtTime(0, t0);
+    param.linearRampToValueAtTime(l.v, t0 + a);
+    if (l.hold) param.setValueAtTime(l.v, t0 + Math.max(a, l.dur * 0.7));
+    param.exponentialRampToValueAtTime(SILENT, end);
+  }
+
+  // Plays recipe `name` at time t. Returns a function that cuts it short.
+  function playRecipe(name, t, dest, jit = 0) {
+    const r = RECIPES[name];
+    const parts = [];
+    r.layers.forEach((l, i) => {
+      const t0 = t + (l.at || 0);
+      const src = source(l.w, t0);
+      if (l.w === 'noise') {
+        src.playbackRate.value = 1 + jit;
+      } else {
+        const key = `${name}:${i}`;
+        let c = curves.get(key);
+        if (!c) { c = freqCurve(l); curves.set(key, c); }
+        src.frequency.setValueCurveAtTime(c, t0, l.dur);
+        if (jit) src.detune.value = 1200 * Math.log2(1 + jit);
+      }
+      const g = ctx.createGain();
+      envelope(g.gain, t0, l);
+      let node = src;
+      if (l.filt) {
+        const f = ctx.createBiquadFilter();
+        f.type = l.filt.t;
+        const [f0, f1] = Array.isArray(l.filt.f) ? l.filt.f : [l.filt.f, l.filt.f];
+        f.frequency.setValueAtTime(f0, t0);
+        if (f1 !== f0) f.frequency.exponentialRampToValueAtTime(f1, t0 + l.dur);
+        if (l.filt.q) f.Q.value = l.filt.q;
+        node.connect(f);
+        node = f;
+      }
+      node.connect(g);
+      g.connect(dest);
+      src.stop(t0 + l.dur + 0.02);
+      parts.push([src, g]);
+    });
+    return (now) => {
+      for (const [src, g] of parts) {
+        g.gain.cancelScheduledValues(now);
+        g.gain.setTargetAtTime(0, now, 0.008);
+        src.stop(now + 0.04);
+      }
+    };
+  }
+
+  // One music event ({ ch: 'lead' | 'bass', midi } or { ch: 'drum', drum }).
+  function playNote(ev, t, dur, dest, leadWave = 'pulse25') {
+    if (ev.ch === 'drum') {
+      if (ev.drum === 'k') {
+        const o = source('sine', t);
+        o.frequency.setValueAtTime(150, t);
+        o.frequency.exponentialRampToValueAtTime(45, t + 0.11);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.3, t);
+        g.gain.exponentialRampToValueAtTime(SILENT, t + 0.13);
+        o.connect(g).connect(dest);
+        o.stop(t + 0.15);
+        return;
+      }
+      const snare = ev.drum === 's';
+      const s = source('noise', t);
+      const f = ctx.createBiquadFilter();
+      f.type = snare ? 'bandpass' : 'highpass';
+      f.frequency.value = snare ? 1800 : 7000;
+      if (snare) f.Q.value = 0.8;
+      const g = ctx.createGain();
+      const len = snare ? 0.12 : 0.035;
+      g.gain.setValueAtTime(snare ? 0.18 : 0.07, t);
+      g.gain.exponentialRampToValueAtTime(SILENT, t + len);
+      s.connect(f).connect(g).connect(dest);
+      s.stop(t + len + 0.02);
+      return;
+    }
+    const lead = ev.ch === 'lead';
+    const o = source(lead ? leadWave : 'triangle', t);
+    o.frequency.setValueAtTime(midiToHz(ev.midi), t);
+    const v = lead ? 0.12 : 0.22;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(v, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(v * 0.45, t + Math.max(0.01, dur * 0.85));
+    g.gain.linearRampToValueAtTime(0, t + dur);
+    o.connect(g).connect(dest);
+    o.stop(t + dur + 0.02);
+  }
+
+  return { playRecipe, playNote, noise };
+}
+
+function defaultAC() {
+  if (typeof window === 'undefined') return null;
+  return window.AudioContext || window.webkitAudioContext || null;
+}
+
+const LEADS = { menu: 'triangle', run: 'pulse25', boss: 'pulse12' };
+
+// opts (for tests): AC (AudioContext constructor or null), nowMs(),
+// setInterval / clearInterval, random().
+export function createAudio(opts = {}) {
+  const getAC = 'AC' in opts ? () => opts.AC : defaultAC;
+  const nowMs = opts.nowMs || (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+  const setTimer = opts.setInterval || ((f, ms) => setInterval(f, ms));
+  const clearTimer = opts.clearInterval || ((id) => clearInterval(id));
+  const random = opts.random || Math.random;
+
+  let sfxOn = true;
+  let musicOn = true;
+  let ctx = null;
+  let failed = false;
+  let sleeping = false;
+  let synth = null;
+  let sfxBus = null, musicBus = null;
+  let scene = null; // 'menu' | 'run' | 'boss' | 'paused' | null
+  let timer = null;
+  let songLead = 'pulse25';
+  const limiter = createLimiter();
+  const pool = createVoicePool(MAX_VOICES);
+  const seq = createSequencer({
+    lookahead: 0.2,
+    onNote: (ev, t, dur) => { if (synth) synth.playNote(ev, t, dur, musicBus, songLead); },
+  });
+
+  function init() {
+    if (ctx || failed) return ctx;
+    const AC = getAC();
+    if (!AC) { failed = true; return null; }
+    try {
+      ctx = new AC();
+      const master = ctx.createGain();
+      master.gain.value = MASTER_VOL;
+      let out = master;
+      if (ctx.createDynamicsCompressor) {
+        // A fast, high-ratio compressor acts as a gentle limiter.
+        const comp = ctx.createDynamicsCompressor();
+        comp.threshold.value = -12;
+        comp.knee.value = 6;
+        comp.ratio.value = 12;
+        comp.attack.value = 0.002;
+        comp.release.value = 0.2;
+        master.connect(comp);
+        out = comp;
+      }
+      out.connect(ctx.destination);
+      sfxBus = ctx.createGain();
+      sfxBus.gain.value = SFX_VOL;
+      sfxBus.connect(master);
+      musicBus = ctx.createGain();
+      musicBus.gain.value = 0;
+      musicBus.connect(master);
+      synth = createSynth(ctx);
     } catch {
       ctx = null;
+      synth = null;
+      failed = true;
     }
     return ctx;
   }
 
-  function blip(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
-    if (muted) return;
-    const c = ensure();
-    if (!c) return;
-    if (c.state === 'suspended') c.resume().catch(() => {});
-    const t = c.currentTime;
-    const o = c.createOscillator();
-    const g = c.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, t);
-    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), t + dur);
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(c.destination);
-    o.start(t);
-    o.stop(t + dur + 0.02);
+  const anyOn = () => sfxOn || musicOn;
+
+  function resumeCtx() {
+    if (ctx && ctx.state === 'suspended' && !sleeping && anyOn()) {
+      try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch { /* ignore */ }
+    }
+  }
+  function suspendCtx() {
+    if (ctx && ctx.state === 'running') {
+      try { const p = ctx.suspend(); if (p && p.catch) p.catch(() => {}); } catch { /* ignore */ }
+    }
+  }
+
+  // The timer only wakes the sequencer; notes are timed on the audio clock.
+  function startTimer() {
+    if (timer === null) timer = setTimer(() => { if (ctx) seq.tick(ctx.currentTime); }, 50);
+  }
+  function stopTimer() {
+    if (timer !== null) { clearTimer(timer); timer = null; }
+  }
+  function fadeMusic(to, tau) {
+    if (!musicBus) return;
+    const now = ctx.currentTime;
+    musicBus.gain.cancelScheduledValues(now);
+    musicBus.gain.setTargetAtTime(to, now, tau);
+  }
+
+  // Make the music match the scene and the music switch.
+  function applyScene() {
+    if (!ctx) return;
+    if (!musicOn || sleeping || scene === 'paused') {
+      // Keep the song position, so resuming carries on where it stopped.
+      seq.pause();
+      fadeMusic(0, 0.08);
+      stopTimer();
+      return;
+    }
+    const song = scene === 'menu' || scene === 'run' || scene === 'boss' ? scene : null;
+    if (!song) {
+      seq.stop();
+      fadeMusic(0, 0.15);
+      stopTimer();
+      return;
+    }
+    const t = ctx.currentTime + 0.06;
+    if (seq.song === song) {
+      if (!seq.playing) seq.resume(t);
+    } else {
+      seq.start(song, t);
+      songLead = LEADS[song];
+    }
+    fadeMusic(MUSIC_VOL, 0.15);
+    seq.tick(ctx.currentTime);
+    startTimer();
+  }
+
+  function play(events) {
+    if (!ctx) return;
+    for (const e of events) {
+      if (e.type === 'bossPhase2' && seq.song === 'boss') seq.setTempo(1.12);
+    }
+    if (!sfxOn || sleeping || ctx.state === 'suspended') return;
+    const t = ctx.currentTime;
+    const ms = nowMs();
+    let started = 0;
+    for (const e of events) {
+      const name = soundFor(e);
+      if (!name) continue;
+      const r = RECIPES[name];
+      if (r.prio < 2 && started >= MAX_STARTS_PER_FRAME) continue;
+      if (!limiter.allow(name, ms)) continue;
+      const voice = pool.admit(t, recipeDur(r), r.prio);
+      if (!voice) continue;
+      const jit = r.jit ? (random() * 2 - 1) * r.jit : 0;
+      try {
+        voice.stop = synth.playRecipe(name, t, sfxBus, jit);
+      } catch {
+        voice.end = t; // free the slot
+      }
+      started += 1;
+    }
   }
 
   return {
-    get muted() { return muted; },
+    get muted() { return !sfxOn; },
+    get music() { return musicOn; },
+    get scene() { return scene; },
     setMuted(m) {
-      muted = !!m;
-      if (!muted) ensure();
+      sfxOn = !m;
+      if (anyOn()) resumeCtx();
+      else suspendCtx();
     },
-    unlock() { if (!muted) ensure(); },
-    play(events) {
-      if (muted) return;
-      const now = performance.now();
-      for (const e of events) {
-        switch (e.type) {
-          case 'shot':
-            if (now - lastShot > 90) { blip(880, 0.03, 'square', 0.012); lastShot = now; }
-            break;
-          case 'gate':
-            if (e.mood === 'good') blip(520, 0.18, 'triangle', 0.08, 500);
-            else if (e.mood === 'bad') blip(300, 0.22, 'sawtooth', 0.05, -180);
-            else blip(400, 0.1, 'triangle', 0.05);
-            break;
-          case 'gateHit':
-            if (e.flipped) blip(990, 0.1, 'triangle', 0.06, 300);
-            break;
-          case 'kill':
-            if (now - lastKill > 60) { blip(180, 0.12, 'square', 0.04, -100); lastKill = now; }
-            break;
-          case 'crowdLoss':
-            if (e.cause !== 'boss') blip(140, 0.15, 'sawtooth', 0.05, -60);
-            break;
-          case 'powerup': blip(660, 0.25, 'triangle', 0.08, 700); break;
-          case 'gambleReveal': blip(e.mood === 'good' ? 880 : 200, 0.2, 'triangle', 0.07, e.mood === 'good' ? 400 : -100); break;
-          case 'bossSlam': blip(70, 0.35, 'sawtooth', 0.09, -30); break;
-          case 'boulderLand': blip(90, 0.22, 'square', 0.07, -40); break;
-          case 'bossPhase2': blip(150, 0.5, 'sawtooth', 0.08, 120); break;
-          case 'coin': if (now - lastCoin > 50) { blip(1320, 0.06, 'triangle', 0.035); lastCoin = now; } break;
-          case 'boom': blip(120, 0.18, 'sawtooth', 0.06, -60); break;
-          case 'ambush': blip(160, 0.3, 'sawtooth', 0.08, -110); break;
-          case 'arrowFire': blip(1200, 0.12, 'sine', 0.03, -700); break;
-          case 'hint': blip(700, 0.12, 'triangle', 0.05, 200); break;
-          case 'squeeze': if (e.on) blip(330, 0.06, 'triangle', 0.04, 120); break;
-          case 'bossStart': blip(110, 0.5, 'sawtooth', 0.07, -40); break;
-          case 'won': blip(523, 0.15, 'triangle', 0.08); setTimeout(() => blip(784, 0.3, 'triangle', 0.08), 140); break;
-          case 'lost': blip(220, 0.5, 'sawtooth', 0.06, -150); break;
-          default: break;
-        }
-      }
+    setMusic(on) {
+      musicOn = !!on;
+      if (anyOn()) resumeCtx();
+      applyScene();
+      if (!anyOn()) suspendCtx();
     },
+    // Call from a user gesture: creates or resumes the context.
+    unlock() {
+      if (!anyOn() || sleeping) return;
+      const fresh = !ctx;
+      if (!init()) return;
+      resumeCtx();
+      if (fresh) applyScene();
+    },
+    // 'menu' | 'run' | 'boss' | 'paused' | null. Cheap to call every frame.
+    setScene(s) {
+      if (s === scene) return;
+      scene = s;
+      applyScene();
+    },
+    // Tab hidden / shown.
+    sleep() {
+      if (sleeping) return;
+      sleeping = true;
+      applyScene();
+      suspendCtx();
+    },
+    wake() {
+      if (!sleeping) return;
+      sleeping = false;
+      resumeCtx();
+      applyScene();
+    },
+    play,
+    _debug: { pool, limiter, seq, get ctx() { return ctx; }, get timer() { return timer; } },
   };
 }

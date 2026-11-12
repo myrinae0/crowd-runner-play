@@ -9,7 +9,9 @@ export const UPGRADES = {
 };
 
 export function defaultSave() {
-  return { v: 1, coins: 0, level: 1, best: 1, upgrades: { crowd: 0, rate: 0, dmg: 0 }, muted: true };
+  // Sound effects and music are on for new players. `muted` is the sound
+  // effects switch (its name predates the music); `music` is the music switch.
+  return { v: 1, coins: 0, level: 1, best: 1, upgrades: { crowd: 0, rate: 0, dmg: 0 }, muted: false, music: true };
 }
 
 export function statsFromUpgrades(u = {}) {
@@ -55,8 +57,18 @@ export function sanitize(raw) {
       rate: int(u.rate, 0, UPGRADES.rate.max, 0),
       dmg: int(u.dmg, 0, UPGRADES.dmg.max, 0),
     },
-    muted: typeof raw.muted === 'boolean' ? raw.muted : d.muted,
+    ...soundPrefs(raw, d),
   };
+}
+
+// A save from before the music existed has no `music` field. The old game
+// defaulted to muted and wrote `muted: true` into every save, so an old mute
+// is not a real choice: those saves get sound and music on once. Saves that
+// have a `music` field keep both choices.
+export function soundPrefs(raw, d = defaultSave()) {
+  if (typeof raw.music !== 'boolean') return { muted: d.muted, music: d.music };
+  const muted = typeof raw.muted === 'boolean' ? raw.muted : d.muted;
+  return { muted, music: raw.music };
 }
 
 export function loadSave(storage) {

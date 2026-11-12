@@ -72,6 +72,12 @@ canvas.px-text {
   place-items: center;
   cursor: pointer;
 }
+/* Invisible 4 px margin: a 42 px tap target around the 34 px button. */
+.icon-btn::after { content: ''; position: absolute; inset: -4px; }
+.mute-btn { left: calc(max(8px, calc(50vw - 250px)) + 44px); }
+.mute-btn .ico-off, .mute-btn.off .ico-on { display: none; }
+.mute-btn.off .ico-off { display: block; }
+.mute-btn.off { fill: #ff7b72; }
 
 .screen {
   position: absolute;
@@ -142,6 +148,8 @@ button {
 .big:active { transform: translateY(3px); box-shadow: 0 0 0 3px var(--outline), inset 0 3px 0 #6fb0ff, inset 0 -3px 0 var(--blue-dark), 0 2px 0 3px var(--outline); }
 
 .ghost {
+  min-height: 40px;
+  min-width: 40px;
   border: 0;
   border-radius: 0;
   background: var(--panel-2);
